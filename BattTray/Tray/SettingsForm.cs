@@ -13,6 +13,9 @@ namespace BattTray.Tray;
 /// </remarks>
 internal sealed class SettingsForm : Form
 {
+    // A control does not own its assigned Font, so this must be released with the form.
+    // Sharing it also avoids allocating one GDI font for each section heading.
+    readonly Font _headingFont = new(SystemFonts.DefaultFont, FontStyle.Bold);
     readonly CheckBox _startWithWindows;
     readonly CheckBox _notify;
     readonly ComboBox _threshold;
@@ -179,18 +182,26 @@ internal sealed class SettingsForm : Form
         _ => $"{seconds / 60} minutes",
     };
 
-    static void AddHeading(TableLayoutPanel layout, string text, bool first = false)
+    void AddHeading(TableLayoutPanel layout, string text, bool first = false)
     {
         var label = new Label
         {
             Text = text,
             AutoSize = true,
-            Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
+            Font = _headingFont,
             Margin = new Padding(0, first ? 0 : 12, 0, 4),
         };
 
         layout.Controls.Add(label);
         layout.SetColumnSpan(label, 2);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            _headingFont.Dispose();
+
+        base.Dispose(disposing);
     }
 
     static void AddSpanned(TableLayoutPanel layout, Control control)
