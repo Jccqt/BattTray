@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -6,6 +6,24 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BattTray</RootNamespace>
+    <AssemblyName>BattTray</AssemblyName>
+    <ApplicationIcon>Assets\batttray-black.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Both variants ship inside the exe; the tray picks one to contrast the taskbar. -->
+    <EmbeddedResource Include="Assets\batttray-black.ico" />
+    <EmbeddedResource Include="Assets\batttray-white.ico" />
+  </ItemGroup>
+
+  <!-- The app idles in the tray, so favour a small, quiet footprint over throughput. -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
 </Project>
