@@ -32,10 +32,26 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     {
         var batteries = ReadBatteryReadings();
         var results = new List<Peripheral>();
+        var pairedDevices = BluetoothApi.GetPairedDevices();
 
-        foreach (var device in BluetoothApi.GetPairedDevices())
+        // Phones often expose a battery profile, but they are not PC peripherals. Keep
+        // their names too: iOS may rotate the LE address, leaving an old PnP node that
+        // cannot be joined to the current pairing record by address alone.
+        var phoneNames = pairedDevices
+            .Where(device => Categorize(device.ClassOfDevice) == DeviceCategory.Phone)
+            .Select(device => CleanNodeName(device.Name))
+            .Where(name => name is not null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var device in pairedDevices)
         {
             batteries.Remove(device.Address, out var reading);
+
+            // BattTray deliberately tracks PC peripherals only. Remove the associated
+            // battery entry before continuing so a phone cannot reappear in the
+            // unmatched-node fallback below.
+            if (Categorize(device.ClassOfDevice) == DeviceCategory.Phone)
+                continue;
 
             // A paired device with neither a battery reading nor a live connection is
             // almost always a leftover pairing; keep it out of the menu.
@@ -58,6 +74,12 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
         // bonded through the LE-only path. Fall back to the node's own name.
         foreach (var (address, reading) in batteries)
         {
+            // A phone can use a different, private LE address after reconnecting. Its
+            // old battery node then has no pairing match, so identify it by the stable
+            // friendly name instead of turning it into a duplicate peripheral.
+            if (reading.NodeName is not null && phoneNames.Contains(reading.NodeName))
+                continue;
+
             results.Add(new Peripheral
             {
                 Id = FormatAddress(address),
