@@ -106,6 +106,10 @@ The battery property does not sit on the device you would expect. For a headset 
 on the Hands-Free profile child node (`soundcore R60i NC Hands-Free AG`), which is why the
 name comes from the Bluetooth API rather than from the PnP tree.
 
+BattTray intentionally ignores devices that Bluetooth classifies as phones, including
+iPhones and Android phones. They are not PC peripherals, and some phones rotate their LE
+address on reconnect, which can otherwise leave duplicate battery nodes behind.
+
 ### Two behaviours worth knowing
 
 **Readings survive disconnection.** Windows keeps the last known percentage after a device
