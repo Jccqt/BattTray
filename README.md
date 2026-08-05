@@ -15,11 +15,22 @@ Bluetooth, wired USB, or a 2.4 GHz dongle.
 
 Charging state is modelled but not yet reported by any source — see below.
 
-## Running it
+## Install
 
-```bash
-dotnet run --project BattTray
-```
+Download `BattTray.exe` from the [latest release](https://github.com/Jccqt/BattTray/releases/latest)
+and run it. There is no installer and nothing to unpack — it is a single self-contained
+file, so no .NET runtime needs to be installed first.
+
+Requires 64-bit Windows 10 or 11 with a Bluetooth radio. To have it start with Windows,
+use `Settings… > Start with Windows` rather than moving the exe anywhere in particular;
+keep it somewhere permanent, since that setting points at wherever the file currently is.
+
+The exe is not code-signed, so SmartScreen will show "Windows protected your PC" on first
+run — `More info > Run anyway`. If you would rather not take an unsigned binary on trust,
+[build it yourself](#building-from-source); the release is built from the tagged commit by
+the workflow in `.github/workflows/release.yml`.
+
+## Using it
 
 The app has no resident window. It adds a tray icon; right-click it for the device list,
 `Settings…`, or `Exit`. Hovering shows the lowest connected level without opening
@@ -148,3 +159,42 @@ diagnostics are already transport-agnostic.
 Refresh is a plain timer rather than `WM_DEVICECHANGE` registration. At ~2 ms per scan the
 poll is not a cost problem, so the interval was exposed as a setting instead; event-driven
 refresh remains the way to make connect/disconnect instant without polling faster.
+
+## Building from source
+
+Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and Windows.
+There are no package dependencies — the Bluetooth work is direct P/Invoke into
+`bluetoothapis.dll` and `cfgmgr32.dll`.
+
+```bash
+dotnet run --project BattTray
+```
+
+To produce the same single-file exe the releases ship:
+
+```bash
+dotnet publish BattTray/BattTray.csproj -p:PublishProfile=win-x64
+```
+
+The result lands in `BattTray/bin/publish/win-x64/`. Those settings live in a publish
+profile rather than the csproj because `SelfContained` applies to the whole build graph:
+set in the csproj it breaks `dotnet run` and stops the diagnostics harness from
+referencing the app.
+
+## Uninstalling
+
+Delete the exe. Two things live outside it: `%APPDATA%\BattTray\settings.json`, and the
+autostart entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` if it was ever
+switched on. Turning `Start with Windows` off before deleting removes the second.
+
+## Contributing
+
+Pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Readings from hardware
+I do not own are the most useful thing to send: run the diagnostics harness and paste its
+output, since the raw bytes are what separate a decoding bug here from a device reporting
+something strange. Wired USB and 2.4 GHz support are unimplemented and are the clearest
+place to start on code.
+
+## License
+
+[MIT](LICENSE)

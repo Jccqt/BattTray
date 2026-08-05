@@ -11,6 +11,18 @@
     <ApplicationIcon>Assets\batttray-black.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Shown on the exe's Properties > Details tab, which is the only place a user who
+       downloaded a single unsigned file can check what they are about to run. -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Product>BattTray</Product>
+    <Authors>Jc Calayag</Authors>
+    <Company>Jc Calayag</Company>
+    <Copyright>Copyright (c) 2026 Jc Calayag</Copyright>
+    <AssemblyTitle>BattTray</AssemblyTitle>
+    <Description>Windows tray app showing the battery level of Bluetooth peripherals.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- Both variants ship inside the exe; the tray picks one to contrast the taskbar. -->
     <EmbeddedResource Include="Assets\batttray-black.ico" />
