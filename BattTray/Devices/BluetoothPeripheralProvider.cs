@@ -72,6 +72,79 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
         return results;
     }
 
+    /// <summary>
+    /// Dumps both halves of the join this provider performs: the pairing records that supply
+    /// identity and connection, and the PnP nodes that supply battery. A device missing from
+    /// the menu is nearly always present in exactly one of these two lists.
+    /// </summary>
+    public IReadOnlyList<DiagnosticNode> GetDiagnostics()
+    {
+        var nodes = new List<DiagnosticNode>();
+
+        foreach (var device in BluetoothApi.GetPairedDevices())
+        {
+            nodes.Add(new DiagnosticNode(
+                Transport.Bluetooth,
+                $"paired: {device.Name}",
+                FormatAddress(device.Address),
+                [
+                    new DiagnosticProperty(
+                        "class of device", "BLUETOOTH_DEVICE_INFO.ulClassofDevice",
+                        $"0x{device.ClassOfDevice:X6}", Categorize(device.ClassOfDevice).ToString()),
+                    new DiagnosticProperty(
+                        "connected", "BLUETOOTH_DEVICE_INFO.fConnected",
+                        device.IsConnected ? "TRUE" : "FALSE", null),
+                ]));
+        }
+
+        foreach (var enumerator in Enumerators)
+        {
+            foreach (var deviceId in ConfigManager.GetDeviceIds(enumerator))
+            {
+                uint devInst = ConfigManager.LocateDevNode(deviceId);
+
+                // Only nodes carrying a battery byte are worth printing; the rest of the
+                // Bluetooth tree is profile plumbing this provider never looks at.
+                if (devInst == 0 || ConfigManager.GetByte(devInst, DevPropKeys.BluetoothBattery) is null)
+                    continue;
+
+                nodes.Add(new DiagnosticNode(
+                    Transport.Bluetooth,
+                    $"node: {ConfigManager.GetString(devInst, DevPropKeys.FriendlyName) ?? "(unnamed)"}",
+                    deviceId,
+                    [
+                        Describe(devInst, "battery level", "{104ea319-...bbe5} PID 2", DevPropKeys.BluetoothBattery),
+                        Describe(devInst, "battery updated", "{104ea319-...bbe5} PID 7", DevPropKeys.BluetoothBatteryLastUpdated),
+                        Describe(devInst, "radio address", "DEVPKEY_Bluetooth_DeviceAddress", DevPropKeys.BluetoothDeviceAddress),
+                        Describe(devInst, "is present", "DEVPKEY_Device_IsPresent", DevPropKeys.IsPresent),
+                        Describe(devInst, "friendly name", "DEVPKEY_Device_FriendlyName", DevPropKeys.FriendlyName),
+                    ]));
+            }
+        }
+
+        return nodes;
+    }
+
+    /// <summary>Reads one property both ways: the bytes on the wire and this app's reading of them.</summary>
+    static DiagnosticProperty Describe(uint devInst, string name, string key, DevPropKey propertyKey)
+    {
+        if (ConfigManager.GetRaw(devInst, propertyKey) is not { } property)
+            return new DiagnosticProperty(name, key, "(absent)", null);
+
+        string raw = $"{DevPropType.Describe(property.Type)} [{Convert.ToHexString(property.Bytes)}]";
+
+        string? decoded = property.Type switch
+        {
+            DevPropType.Byte => ConfigManager.GetByte(devInst, propertyKey)?.ToString(CultureInfo.InvariantCulture),
+            DevPropType.Boolean => ConfigManager.GetBoolean(devInst, propertyKey)?.ToString(),
+            DevPropType.String => ConfigManager.GetString(devInst, propertyKey),
+            DevPropType.FileTime => ConfigManager.GetFileTimeUtc(devInst, propertyKey)?.ToString("u", CultureInfo.InvariantCulture),
+            _ => null,
+        };
+
+        return new DiagnosticProperty(name, key, raw, decoded);
+    }
+
     /// <summary>Newest battery reading per radio address, across all Bluetooth device nodes.</summary>
     static Dictionary<ulong, BatteryReading> ReadBatteryReadings()
     {

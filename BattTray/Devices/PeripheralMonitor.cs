@@ -18,6 +18,26 @@ internal sealed class PeripheralMonitor(params IPeripheralProvider[] providers)
         .Where(p => p.IsConnected && p.BatteryPercent is not null)
         .Min(p => p.BatteryPercent);
 
+    /// <summary>Raw evidence from every provider, for the diagnostics tool.</summary>
+    public IReadOnlyList<DiagnosticNode> GetDiagnostics()
+    {
+        var collected = new List<DiagnosticNode>();
+
+        foreach (var provider in _providers)
+        {
+            try
+            {
+                collected.AddRange(provider.GetDiagnostics());
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"{provider.GetType().Name} diagnostics failed: {ex}");
+            }
+        }
+
+        return collected;
+    }
+
     public void Refresh()
     {
         var collected = new List<Peripheral>();

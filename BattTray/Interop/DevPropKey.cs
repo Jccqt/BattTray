@@ -18,6 +18,20 @@ internal static class DevPropType
     public const uint FileTime = 0x10;
     public const uint Boolean = 0x11;
     public const uint String = 0x12;
+
+    /// <summary>
+    /// Names a type code for the diagnostics dump. An unexpected type is the usual reason a
+    /// property reads as absent, so the number is worth showing even when it is unfamiliar.
+    /// </summary>
+    public static string Describe(uint type) => type switch
+    {
+        Byte => "BYTE",
+        Guid => "GUID",
+        FileTime => "FILETIME",
+        Boolean => "BOOLEAN",
+        String => "STRING",
+        _ => $"0x{type:X2}",
+    };
 }
 
 /// <summary>Known DEVPROPKEYs. Names match the SDK headers so they can be looked up.</summary>

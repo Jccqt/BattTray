@@ -66,8 +66,19 @@ internal static class ConfigManager
         }
     }
 
+    /// <summary>
+    /// A property exactly as the device node reported it. The diagnostics tool prints these
+    /// untransformed, so a wrong percentage can be traced to a byte rather than to a guess
+    /// about which conversion this code applied.
+    /// </summary>
+    public static (uint Type, byte[] Bytes)? GetRaw(uint devInst, DevPropKey key) =>
+        ReadCore(devInst, key);
+
     /// <summary>Fetches a property's raw bytes, or null if absent or not of the expected type.</summary>
-    static byte[]? Read(uint devInst, DevPropKey key, uint expectedType)
+    static byte[]? Read(uint devInst, DevPropKey key, uint expectedType) =>
+        ReadCore(devInst, key) is { } property && property.Type == expectedType ? property.Bytes : null;
+
+    static (uint Type, byte[] Bytes)? ReadCore(uint devInst, DevPropKey key)
     {
         if (devInst == 0)
             return null;
@@ -82,7 +93,7 @@ internal static class ConfigManager
         if (CM_Get_DevNode_PropertyW(devInst, ref key, out uint type, buffer, ref size, 0) != CR_SUCCESS)
             return null;
 
-        return type == expectedType ? buffer : null;
+        return (type, buffer);
     }
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]

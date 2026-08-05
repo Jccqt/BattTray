@@ -1,27 +1,27 @@
 using BattTray.Devices;
+using BattTray.Settings;
+using Microsoft.Win32;
 
 namespace BattTray.Tray;
 
 /// <summary>
 /// The whole UI: a tray icon whose menu is rebuilt from a fresh scan each time it opens.
-/// There is no window, which is what keeps the resident footprint small.
+/// There is no resident window, which is what keeps the footprint small; the settings
+/// dialog is built on demand and disposed on close.
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
-    /// <summary>
-    /// Background cadence. The menu refreshes on open regardless, so this only needs to
-    /// keep the icon and tooltip honest while the user is not looking.
-    /// </summary>
-    static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(1);
-
     /// <summary>Shell tooltips are truncated past this length.</summary>
     const int MaxTooltipLength = 63;
 
     readonly PeripheralMonitor _monitor = new(new BluetoothPeripheralProvider());
     readonly NotifyIcon _notifyIcon;
+    readonly LowBatteryNotifier _notifier;
     readonly ContextMenuStrip _menu;
     readonly System.Windows.Forms.Timer _timer;
 
+    AppSettings _settings = SettingsStore.Load();
+    SettingsForm? _settingsForm;
     Icon? _currentIcon;
 
     /// <summary>Theme the loaded icon was chosen for; null until the first load.</summary>
@@ -42,9 +42,20 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         _notifyIcon.DoubleClick += (_, _) => Refresh();
 
-        _timer = new System.Windows.Forms.Timer { Interval = (int)PollInterval.TotalMilliseconds };
+        // The timeout only matters on shells old enough to honour it; modern Windows routes
+        // balloon tips through the notification centre and picks its own duration.
+        _notifier = new LowBatteryNotifier(
+            (title, body) => _notifyIcon.ShowBalloonTip(10_000, title, body, ToolTipIcon.Warning));
+
+        _timer = new System.Windows.Forms.Timer();
         _timer.Tick += (_, _) => Refresh();
+        ApplyPollInterval();
         _timer.Start();
+
+        // The poll would pick a theme change up eventually, but "eventually" is visible on
+        // a taskbar that just inverted, so listen for the change instead. General is the
+        // category the shell's ImmersiveColorSet broadcast arrives under.
+        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
 
         Refresh();
 
@@ -62,13 +73,26 @@ internal sealed class TrayApplicationContext : ApplicationContext
         RebuildMenu();
     }
 
-    /// <summary>Rescans devices and updates the tooltip, leaving the menu alone.</summary>
+    void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category == UserPreferenceCategory.General)
+            ApplyThemeIcon();
+    }
+
+    /// <summary>Rescans devices, updates the tooltip and alerts on low batteries.</summary>
     void Refresh()
     {
         _monitor.Refresh();
         ApplyThemeIcon();
         _notifyIcon.Text = BuildTooltip();
+
+        // Given the full list, not the filtered one: hiding disconnected devices is a
+        // display preference and must not silence a device that is genuinely low.
+        _notifier.Evaluate(_monitor.Peripherals, _settings);
     }
+
+    void ApplyPollInterval() =>
+        _timer.Interval = (int)TimeSpan.FromSeconds(_settings.RefreshIntervalSeconds).TotalMilliseconds;
 
     /// <summary>
     /// Swaps the icon only when the system theme has changed. The icon never reflects
@@ -113,19 +137,62 @@ internal sealed class TrayApplicationContext : ApplicationContext
         foreach (var item in previous)
             item.Dispose();
 
-        if (_monitor.Peripherals.Count == 0)
+        var devices = _settings.HideDisconnected
+            ? _monitor.Peripherals.Where(d => d.IsConnected).ToList()
+            : _monitor.Peripherals;
+
+        if (devices.Count == 0)
         {
-            _menu.Items.Add(new ToolStripMenuItem("No Bluetooth devices found") { Enabled = false });
+            // Worded to distinguish "nothing is paired" from "you asked not to see the
+            // devices that are paired but offline".
+            string message = _settings.HideDisconnected && _monitor.Peripherals.Count > 0
+                ? "No connected devices"
+                : "No Bluetooth devices found";
+
+            _menu.Items.Add(new ToolStripMenuItem(message) { Enabled = false });
         }
         else
         {
-            foreach (var device in _monitor.Peripherals)
+            foreach (var device in devices)
                 _menu.Items.Add(CreateDeviceItem(device));
         }
 
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Refresh", null, (_, _) => Refresh()));
+        _menu.Items.Add(new ToolStripMenuItem("Settings…", null, (_, _) => ShowSettings()));
+        _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => ExitApplication()));
+    }
+
+    void ShowSettings()
+    {
+        // A second copy of a dialog that writes the same file would let one overwrite the
+        // other, so an open one is raised instead.
+        if (_settingsForm is not null)
+        {
+            _settingsForm.Activate();
+            return;
+        }
+
+        using var form = new SettingsForm(_settings);
+        _settingsForm = form;
+
+        try
+        {
+            if (form.ShowDialog() != DialogResult.OK)
+                return;
+        }
+        finally
+        {
+            _settingsForm = null;
+        }
+
+        _settings = form.Result;
+        SettingsStore.Save(_settings);
+
+        ApplyPollInterval();
+        Refresh();
+        RebuildMenu();
     }
 
     static ToolStripItem CreateDeviceItem(Peripheral device) =>
@@ -180,6 +247,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (disposing)
         {
+            // Static event: leaving this attached would keep the context alive for the life
+            // of the process.
+            SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             _timer.Stop();
             _timer.Dispose();
             _notifyIcon.Visible = false;

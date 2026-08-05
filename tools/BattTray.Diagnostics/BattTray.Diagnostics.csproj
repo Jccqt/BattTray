@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Console app, but it references the tray app, which pulls in the desktop framework. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BattTray.Diagnostics</RootNamespace>
+    <AssemblyName>BattTray.Diagnostics</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Deliberately the real providers rather than a copy of their logic: a harness that
+         reimplements what it is checking can only ever confirm itself. -->
+    <ProjectReference Include="..\..\BattTray\BattTray.csproj" />
+  </ItemGroup>
+
+</Project>
