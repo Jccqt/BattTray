@@ -1,4 +1,5 @@
 using BattTray.Devices;
+using BattTray.Interop;
 using BattTray.Settings;
 using Microsoft.Win32;
 
@@ -20,6 +21,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     readonly ContextMenuStrip _menu;
     readonly System.Windows.Forms.Timer _timer;
 
+    /// <summary>Supplies the dismissal the menu cannot hear about itself; see OnTrayMouseUp.</summary>
+    readonly OutsideInteractionHook _outsideInteraction;
+
     AppSettings _settings = SettingsStore.Load();
     SettingsForm? _settingsForm;
     Icon? _currentIcon;
@@ -31,15 +35,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         // No image column: the rows carry a percentage in their text, so a glyph beside
         // each one would only add width and repeat what the words already say.
-        _menu = new ContextMenuStrip { ShowImageMargin = false };
-        _menu.Opening += OnMenuOpening;
+        _menu = new TrayContextMenu { ShowImageMargin = false };
 
+        // Bounds rather than the client area, so the border counts as part of the menu and
+        // a click that lands on it is not read as a click on the desktop behind.
+        _outsideInteraction = new OutsideInteractionHook(
+            point => _menu.Visible && _menu.Bounds.Contains(point),
+            () => _menu.Close(ToolStripDropDownCloseReason.AppClicked));
+
+        _menu.Opening += OnMenuOpening;
+        _menu.Opened += (_, _) => _outsideInteraction.Start();
+        _menu.Closed += OnMenuClosed;
+
+        // ContextMenuStrip is deliberately left unset: see OnTrayMouseUp.
         _notifyIcon = new NotifyIcon
         {
-            ContextMenuStrip = _menu,
             Visible = true,
             Text = "BattTray",
         };
+        _notifyIcon.MouseUp += OnTrayMouseUp;
         _notifyIcon.DoubleClick += (_, _) => Refresh();
 
         // The timeout only matters on shells old enough to honour it; modern Windows routes
@@ -63,6 +77,59 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // mean the Opening handler never gets a chance to fill it.
         RebuildMenu();
     }
+
+    /// <summary>
+    /// Opens the menu on a right click, doing by hand what assigning
+    /// <see cref="NotifyIcon.ContextMenuStrip"/> would otherwise do for us.
+    /// </summary>
+    /// <remarks>
+    /// The built-in path calls SetForegroundWindow on the icon's hidden message window
+    /// before showing the menu. When the icon sits behind the taskbar's chevron that is
+    /// destructive: the shell's hidden-icons flyout is a light-dismiss popup, so losing
+    /// activation makes it collapse the moment the pointer leaves it, and the menu is
+    /// left hanging over a gap where the icons used to be. A drop-down shown this way is
+    /// never activated, so foreground stays with the flyout and the flyout stays open.
+    /// The cost is that dismissal has to be arranged by hand as well, since the framework
+    /// closes a drop-down off activation this one never receives: see
+    /// <see cref="_outsideInteraction"/>.
+    /// </remarks>
+    void OnTrayMouseUp(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Right)
+            return;
+
+        var position = Cursor.Position;
+        _menu.Show(position, DropDownDirectionFrom(position));
+    }
+
+    /// <summary>
+    /// Picks the quadrant to unfold into so the menu grows away from the taskbar rather
+    /// than across it, whichever edge the taskbar is docked to.
+    /// </summary>
+    static ToolStripDropDownDirection DropDownDirectionFrom(Point position)
+    {
+        var workingArea = Screen.FromPoint(position).WorkingArea;
+        bool above = position.Y > workingArea.Top + (workingArea.Height / 2);
+        bool left = position.X > workingArea.Left + (workingArea.Width / 2);
+
+        return (above, left) switch
+        {
+            (true, true) => ToolStripDropDownDirection.AboveLeft,
+            (true, false) => ToolStripDropDownDirection.AboveRight,
+            (false, true) => ToolStripDropDownDirection.BelowLeft,
+            (false, false) => ToolStripDropDownDirection.BelowRight,
+        };
+    }
+
+    /// <remarks>
+    /// The hidden-icons flyout is left to close itself. Hiding its window from here does
+    /// dismiss it, but the shell goes on believing the flyout is up, so the next click on
+    /// the chevron is spent putting that belief right and the user has to click twice.
+    /// Since the click or the window switch that closes this menu is the same one the
+    /// shell light-dismisses on, letting it do that keeps the two in step by itself.
+    /// </remarks>
+    void OnMenuClosed(object? sender, ToolStripDropDownClosedEventArgs e) =>
+        _outsideInteraction.Stop();
 
     void OnMenuOpening(object? sender, System.ComponentModel.CancelEventArgs e)
     {
@@ -170,12 +237,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // other, so an open one is raised instead.
         if (_settingsForm is not null)
         {
-            _settingsForm.Activate();
+            Surface(_settingsForm);
             return;
         }
 
         using var form = new SettingsForm(_settings);
         _settingsForm = form;
+        form.Shown += (_, _) => Surface(form);
 
         try
         {
@@ -193,6 +261,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
         ApplyPollInterval();
         Refresh();
         RebuildMenu();
+    }
+
+    /// <summary>Puts a window in front of the user and gives it the focus if it can.</summary>
+    /// <remarks>
+    /// The menu this is reached from never takes activation, so the app is not the window
+    /// in front when a dialog goes up — and Windows may refuse to hand the foreground to an
+    /// app that is not. A refused claim used to leave the dialog stranded behind whatever
+    /// the user was looking at, with no taskbar button and no place in Alt+Tab to reach it
+    /// by, so it read as a dialog that had failed to open. Raising the window is done first
+    /// because the z-order is not rights-protected the way the foreground is: promoting it
+    /// to topmost and straight back down leaves it above every ordinary window. The claim
+    /// still follows, since it is what moves the keyboard focus when it is granted.
+    /// </remarks>
+    static void Surface(Form form)
+    {
+        form.TopMost = true;
+        form.TopMost = false;
+        form.Activate();
+        ForegroundWindow.Claim(form.Handle);
     }
 
     static ToolStripItem CreateDeviceItem(Peripheral device) =>
@@ -250,6 +337,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // Static event: leaving this attached would keep the context alive for the life
             // of the process.
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            // Global hooks: they outlive the object unless taken down explicitly.
+            _outsideInteraction.Dispose();
             _timer.Stop();
             _timer.Dispose();
             _notifyIcon.Visible = false;
