@@ -26,6 +26,34 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     /// <summary>PnP enumerators that host Bluetooth device nodes.</summary>
     static readonly string[] Enumerators = ["BTHENUM", "BTHLE", "BTHLEDevice"];
 
+    /// <summary>
+    /// Service classes only a phone hosts, as they appear at the head of a device instance
+    /// id. Class-of-device would be the obvious way to spot a phone, but Windows reports
+    /// 0x000000 for it on iPhone pairings and on anything bonded through the LE path, so the
+    /// services the device publishes are the dependable signal. The opening brace is part of
+    /// each prefix so it can only ever match the service GUID, never a hex run further along
+    /// the id.
+    /// </summary>
+    static readonly string[] PhoneServiceClasses =
+    [
+        "{0000111F", // Hands-Free Audio Gateway: the phone half of HFP
+        "{00001112", // Headset Audio Gateway: the phone half of HSP
+        "{0000112F", // Phonebook Access, server side
+        "{00001132", // Message Access Server
+        "{7905F431", // Apple Notification Center Service
+        "{89D3502B", // Apple Media Service
+    ];
+
+    /// <summary>
+    /// The two BDIF_* bits from bthdef.h that mean "the radio link is up right now", one per
+    /// transport. Everything else a device node offers describes the bond instead: a bonded LE
+    /// device keeps <c>DEVPKEY_Device_IsPresent</c> true while switched off, and Windows even
+    /// marks those containers <c>AlwaysShowDeviceAsConnected</c>. Both bits were watched
+    /// flipping in real time as a gamepad connected and dropped.
+    /// </summary>
+    const uint BdifConnected = 0x00000020;
+    const uint BdifLeConnected = 0x01000000;
+
     public Transport Transport => Transport.Bluetooth;
 
     public IReadOnlyList<Peripheral> GetPeripherals()
@@ -33,12 +61,13 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
         var batteries = ReadBatteryReadings();
         var results = new List<Peripheral>();
         var pairedDevices = BluetoothApi.GetPairedDevices();
+        var phoneAddresses = ReadPhoneAddresses();
 
         // Phones often expose a battery profile, but they are not PC peripherals. Keep
         // their names too: iOS may rotate the LE address, leaving an old PnP node that
         // cannot be joined to the current pairing record by address alone.
         var phoneNames = pairedDevices
-            .Where(device => Categorize(device.ClassOfDevice) == DeviceCategory.Phone)
+            .Where(device => IsPhone(device, phoneAddresses))
             .Select(device => CleanNodeName(device.Name))
             .Where(name => name is not null)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -50,7 +79,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
             // BattTray deliberately tracks PC peripherals only. Remove the associated
             // battery entry before continuing so a phone cannot reappear in the
             // unmatched-node fallback below.
-            if (Categorize(device.ClassOfDevice) == DeviceCategory.Phone)
+            if (IsPhone(device, phoneAddresses))
                 continue;
 
             // A paired device with neither a battery reading nor a live connection is
@@ -74,11 +103,15 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
         // bonded through the LE-only path. Fall back to the node's own name.
         foreach (var (address, reading) in batteries)
         {
-            // A phone can use a different, private LE address after reconnecting. Its
-            // old battery node then has no pairing match, so identify it by the stable
-            // friendly name instead of turning it into a duplicate peripheral.
-            if (reading.NodeName is not null && phoneNames.Contains(reading.NodeName))
+            // A phone can use a different, private LE address after reconnecting, so its
+            // battery node has no pairing record to be matched against. Identify it by the
+            // services that node publishes, and failing that by the friendly name, which
+            // survives the address change — either way, no duplicate phone entry.
+            if (phoneAddresses.Contains(address)
+                || (reading.NodeName is not null && phoneNames.Contains(reading.NodeName)))
+            {
                 continue;
+            }
 
             results.Add(new Peripheral
             {
@@ -87,7 +120,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                 Transport = Transport.Bluetooth,
                 BatteryPercent = reading.Percent,
                 BatteryUpdatedUtc = reading.UpdatedUtc,
-                IsConnected = reading.IsPresent,
+                IsConnected = reading.IsConnected,
             });
         }
 
@@ -102,6 +135,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     public IReadOnlyList<DiagnosticNode> GetDiagnostics()
     {
         var nodes = new List<DiagnosticNode>();
+        var phoneAddresses = ReadPhoneAddresses();
 
         foreach (var device in BluetoothApi.GetPairedDevices())
         {
@@ -116,6 +150,12 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                     new DiagnosticProperty(
                         "connected", "BLUETOOTH_DEVICE_INFO.fConnected",
                         device.IsConnected ? "TRUE" : "FALSE", null),
+                    // Without this line a phone-filtered device would simply be absent from
+                    // the menu with nothing here explaining why.
+                    new DiagnosticProperty(
+                        "phone services", "phone-only service GUIDs on this device's PnP nodes",
+                        phoneAddresses.Contains(device.Address) ? "present" : "absent",
+                        IsPhone(device, phoneAddresses) ? "treated as a phone, excluded" : null),
                 ]));
         }
 
@@ -139,12 +179,29 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                         Describe(devInst, "battery updated", "{104ea319-...bbe5} PID 7", DevPropKeys.BluetoothBatteryLastUpdated),
                         Describe(devInst, "radio address", "DEVPKEY_Bluetooth_DeviceAddress", DevPropKeys.BluetoothDeviceAddress),
                         Describe(devInst, "is present", "DEVPKEY_Device_IsPresent", DevPropKeys.IsPresent),
+                        DescribeLink(devInst),
                         Describe(devInst, "friendly name", "DEVPKEY_Device_FriendlyName", DevPropKeys.FriendlyName),
                     ]));
             }
         }
 
         return nodes;
+    }
+
+    /// <summary>
+    /// The BDIF_* flag word with the connection verdict drawn from it. Printed next to
+    /// "is present" on purpose: when those two disagree, the flags are the truthful one.
+    /// </summary>
+    static DiagnosticProperty DescribeLink(uint devInst)
+    {
+        if (ConfigManager.GetUInt32(devInst, DevPropKeys.BluetoothDeviceFlags) is not { } flags)
+            return new DiagnosticProperty("device flags", "DEVPKEY_Bluetooth_DeviceFlags", "(absent)", null);
+
+        return new DiagnosticProperty(
+            "device flags", "DEVPKEY_Bluetooth_DeviceFlags", $"UINT32 [0x{flags:X8}]",
+            IsLinkUp(flags)
+                ? "BDIF_CONNECTED or BDIF_LE_CONNECTED set -> connected"
+                : "connected bits clear -> disconnected, so any battery value here is cached");
     }
 
     /// <summary>Reads one property both ways: the bytes on the wire and this app's reading of them.</summary>
@@ -171,6 +228,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     static Dictionary<ulong, BatteryReading> ReadBatteryReadings()
     {
         var readings = new Dictionary<ulong, BatteryReading>();
+        var links = new Dictionary<ulong, bool>();
 
         foreach (var enumerator in Enumerators)
         {
@@ -180,16 +238,25 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                 if (devInst == 0)
                     continue;
 
-                if (ConfigManager.GetByte(devInst, DevPropKeys.BluetoothBattery) is not { } percent)
+                if (ResolveAddress(devInst, deviceId) is not { } address)
                     continue;
 
-                if (ResolveAddress(devInst, deviceId) is not { } address)
+                // Link state is collected per address, not per node, because the two live on
+                // different nodes of the same device: an LE device carries the flag word on its
+                // parent node while the battery sits on a child that has no flags at all. One
+                // node reporting a live link is enough.
+                if (ConfigManager.GetUInt32(devInst, DevPropKeys.BluetoothDeviceFlags) is { } flags)
+                    links[address] = links.GetValueOrDefault(address) || IsLinkUp(flags);
+
+                if (ConfigManager.GetByte(devInst, DevPropKeys.BluetoothBattery) is not { } percent)
                     continue;
 
                 var reading = new BatteryReading(
                     Percent: Math.Clamp(percent, (byte)0, (byte)100),
                     UpdatedUtc: ConfigManager.GetFileTimeUtc(devInst, DevPropKeys.BluetoothBatteryLastUpdated),
-                    IsPresent: ConfigManager.GetBoolean(devInst, DevPropKeys.IsPresent) ?? false,
+                    // Presence is a poor stand-in — it stays true for a bonded LE device that is
+                    // switched off — but it is all there is when no node published flags.
+                    IsConnected: ConfigManager.GetBoolean(devInst, DevPropKeys.IsPresent) ?? false,
                     NodeName: CleanNodeName(
                         ConfigManager.GetString(devInst, DevPropKeys.FriendlyName)
                         ?? ConfigManager.GetString(devInst, DevPropKeys.DeviceDesc)));
@@ -201,8 +268,17 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
             }
         }
 
+        foreach (ulong address in readings.Keys.ToArray())
+        {
+            if (links.TryGetValue(address, out bool isConnected))
+                readings[address] = readings[address] with { IsConnected = isConnected };
+        }
+
         return readings;
     }
+
+    /// <summary>Whether either transport's connected bit is set in a BDIF_* flag word.</summary>
+    static bool IsLinkUp(uint flags) => (flags & (BdifConnected | BdifLeConnected)) != 0;
 
     static bool IsNewer(BatteryReading candidate, BatteryReading existing) =>
         (candidate.UpdatedUtc ?? DateTime.MinValue) > (existing.UpdatedUtc ?? DateTime.MinValue);
@@ -234,6 +310,38 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
         string cleaned = ProfileSuffix().Replace(name, string.Empty).Trim();
         return cleaned.Length > 0 ? cleaned : name.Trim();
+    }
+
+    /// <summary>
+    /// True when either half of the join says "phone": the pairing record's class-of-device,
+    /// or a phone-only service published by one of the device's PnP nodes.
+    /// </summary>
+    static bool IsPhone(BluetoothDeviceInfo device, HashSet<ulong> phoneAddresses) =>
+        Categorize(device.ClassOfDevice) == DeviceCategory.Phone || phoneAddresses.Contains(device.Address);
+
+    /// <summary>
+    /// Radio addresses of every device publishing a service from <see cref="PhoneServiceClasses"/>.
+    /// All the Bluetooth enumerators are swept, because a phone's Classic profiles and its GATT
+    /// services live in separate subtrees and a given phone may only appear in one of them.
+    /// </summary>
+    static HashSet<ulong> ReadPhoneAddresses()
+    {
+        var addresses = new HashSet<ulong>();
+
+        foreach (var enumerator in Enumerators)
+        {
+            foreach (var deviceId in ConfigManager.GetDeviceIds(enumerator))
+            {
+                if (!PhoneServiceClasses.Any(prefix => deviceId.Contains(prefix, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                uint devInst = ConfigManager.LocateDevNode(deviceId);
+                if (devInst != 0 && ResolveAddress(devInst, deviceId) is { } address)
+                    addresses.Add(address);
+            }
+        }
+
+        return addresses;
     }
 
     /// <summary>Maps a Bluetooth class-of-device word to a display category.</summary>
@@ -274,7 +382,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
     static string FormatAddress(ulong address) => address.ToString("X12", CultureInfo.InvariantCulture);
 
-    sealed record BatteryReading(int Percent, DateTime? UpdatedUtc, bool IsPresent, string? NodeName);
+    sealed record BatteryReading(int Percent, DateTime? UpdatedUtc, bool IsConnected, string? NodeName);
 
     [GeneratedRegex(@"(?:DEV_|&)([0-9A-Fa-f]{12})(?:_|$)")]
     private static partial Regex AddressInInstanceId();

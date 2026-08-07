@@ -14,6 +14,7 @@ internal readonly struct DevPropKey(Guid formatId, uint propertyId)
 internal static class DevPropType
 {
     public const uint Byte = 0x03;
+    public const uint UInt32 = 0x07;
     public const uint Guid = 0x0D;
     public const uint FileTime = 0x10;
     public const uint Boolean = 0x11;
@@ -26,6 +27,7 @@ internal static class DevPropType
     public static string Describe(uint type) => type switch
     {
         Byte => "BYTE",
+        UInt32 => "UINT32",
         Guid => "GUID",
         FileTime => "FILETIME",
         Boolean => "BOOLEAN",
@@ -55,6 +57,12 @@ internal static class DevPropKeys
     public static readonly DevPropKey IsPresent = new(DeviceExGuid, 5);
 
     public static readonly DevPropKey BluetoothDeviceAddress = new(BluetoothGuid, 1);
+
+    /// <summary>
+    /// The BDIF_* flag word from bthdef.h. Its connected bits are the only live link state a
+    /// device node exposes: <see cref="IsPresent"/> reports the bond, not the connection.
+    /// </summary>
+    public static readonly DevPropKey BluetoothDeviceFlags = new(BluetoothGuid, 3);
     public static readonly DevPropKey BluetoothBattery = new(BluetoothBatteryGuid, 2);
     public static readonly DevPropKey BluetoothBatteryLastUpdated = new(BluetoothBatteryGuid, 7);
 }

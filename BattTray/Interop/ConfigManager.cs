@@ -40,6 +40,9 @@ internal static class ConfigManager
     public static byte? GetByte(uint devInst, DevPropKey key) =>
         Read(devInst, key, DevPropType.Byte) is { Length: > 0 } bytes ? bytes[0] : null;
 
+    public static uint? GetUInt32(uint devInst, DevPropKey key) =>
+        Read(devInst, key, DevPropType.UInt32) is { Length: >= 4 } bytes ? BitConverter.ToUInt32(bytes) : null;
+
     public static bool? GetBoolean(uint devInst, DevPropKey key) =>
         Read(devInst, key, DevPropType.Boolean) is { Length: > 0 } bytes ? bytes[0] != 0 : null;
 
