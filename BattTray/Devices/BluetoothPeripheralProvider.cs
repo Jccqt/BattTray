@@ -285,7 +285,9 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
     /// <summary>
     /// Reads the node's Bluetooth address, falling back to the 12 hex digits embedded in
-    /// the device instance id when the property is missing (common on LE nodes).
+    /// the device instance id when the property is missing (common on LE nodes). Accepts
+    /// <paramref name="devInst"/> of 0 for a node that could not be located, in which case
+    /// the id is the only source available.
     /// </summary>
     static ulong? ResolveAddress(uint devInst, string deviceId)
     {
@@ -335,8 +337,12 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                 if (!PhoneServiceClasses.Any(prefix => deviceId.Contains(prefix, StringComparison.OrdinalIgnoreCase)))
                     continue;
 
+                // A failed lookup is not a reason to skip the node: Windows tears down and
+                // recreates a phone's GATT nodes constantly, so the id can go stale between
+                // being listed and being located. The id itself still names the address, and
+                // dropping a phone here is what lets it back into the menu as a peripheral.
                 uint devInst = ConfigManager.LocateDevNode(deviceId);
-                if (devInst != 0 && ResolveAddress(devInst, deviceId) is { } address)
+                if (ResolveAddress(devInst, deviceId) is { } address)
                     addresses.Add(address);
             }
         }
@@ -384,7 +390,23 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
     sealed record BatteryReading(int Percent, DateTime? UpdatedUtc, bool IsConnected, string? NodeName);
 
-    [GeneratedRegex(@"(?:DEV_|&)([0-9A-Fa-f]{12})(?:_|$)")]
+    /// <summary>
+    /// The radio address as it is spelled in a device instance id. Rather than enumerate the
+    /// prefixes Windows puts in front of it — which differ per enumerator and per device, and
+    /// which a swept-from-this-machine sample kept producing new variants of — this matches any
+    /// run of exactly 12 hex digits fenced by id separators:
+    /// <list type="bullet">
+    /// <item><c>BTHLE\DEV_5093524E6499\8&amp;259B6687&amp;0&amp;5093524E6499</c></item>
+    /// <item><c>BTHENUM\{0000111E-...}_LOCALMFG&amp;0000\7&amp;2A1A2FB2&amp;0&amp;5093524E6499_C00000000</c></item>
+    /// <item><c>BTHLEDevice\{7905F431-...}_5093524E6499\9&amp;3B7951A&amp;0&amp;0019</c> (GATT)</item>
+    /// <item><c>BTHLEDEVICE\{0000180F-...}_DEV_VID&amp;022DC8_PID&amp;301B_REV&amp;0001_E417D8248EB3\9&amp;...</c></item>
+    /// </list>
+    /// Requiring a separator on both sides is what keeps it off the hex inside a service GUID:
+    /// the final group of <c>{00010203-0405-0607-0809-0A0B0C0D1912}</c> is also 12 hex digits,
+    /// but it is fenced by <c>-</c> and <c>}</c>. Verified against all 55 Bluetooth instance
+    /// ids present on the development machine.
+    /// </summary>
+    [GeneratedRegex(@"[_&\\]([0-9A-Fa-f]{12})(?=[_&\\]|$)", RegexOptions.IgnoreCase)]
     private static partial Regex AddressInInstanceId();
 
     [GeneratedRegex(@"\s+(Hands-Free(\s+AG)?|Avrcp Transport|AG|Stereo|Audio)$", RegexOptions.IgnoreCase)]
