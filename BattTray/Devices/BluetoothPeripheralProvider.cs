@@ -176,15 +176,15 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
                 nodes.Add(new DiagnosticNode(
                     Transport.Bluetooth,
-                    $"node: {ConfigManager.GetString(devInst, DevPropKeys.FriendlyName) ?? "(unnamed)"}",
+                    $"node: {ReadNodeName(devInst) ?? "(unnamed)"}",
                     deviceId,
                     [
-                        Describe(devInst, "battery level", "{104ea319-...bbe5} PID 2", DevPropKeys.BluetoothBattery),
+                        DescribeBattery(devInst),
                         Describe(devInst, "battery updated", "{104ea319-...bbe5} PID 7", DevPropKeys.BluetoothBatteryLastUpdated),
-                        Describe(devInst, "radio address", "DEVPKEY_Bluetooth_DeviceAddress", DevPropKeys.BluetoothDeviceAddress),
+                        DescribeAddress(devInst, deviceId),
                         Describe(devInst, "is present", "DEVPKEY_Device_IsPresent", DevPropKeys.IsPresent),
                         DescribeLink(devInst, deviceId, links),
-                        Describe(devInst, "friendly name", "DEVPKEY_Device_FriendlyName", DevPropKeys.FriendlyName),
+                        DescribeName(devInst),
                     ]));
             }
         }
@@ -265,13 +265,87 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
         return links;
     }
 
+    /// <summary>
+    /// The battery byte with the percentage the menu shows for it. The two only part company
+    /// when a node reports outside 0-100, which is the case the clamp in
+    /// <see cref="ReadBatteryReadings"/> exists for, and the one where seeing both numbers
+    /// matters: the reading is not the byte, and neither is wrong.
+    /// </summary>
+    static DiagnosticProperty DescribeBattery(uint devInst)
+    {
+        const string Key = "{104ea319-...bbe5} PID 2";
+        string raw = ReadRaw(devInst, DevPropKeys.BluetoothBattery);
+
+        if (ConfigManager.GetByte(devInst, DevPropKeys.BluetoothBattery) is not { } percent)
+            return new DiagnosticProperty("battery level", Key, raw, null);
+
+        int clamped = Math.Clamp(percent, (byte)0, (byte)100);
+
+        return new DiagnosticProperty("battery level", Key, raw,
+            clamped == percent
+                ? clamped.ToString(CultureInfo.InvariantCulture)
+                : $"{clamped} (clamped from {percent})");
+    }
+
+    /// <summary>
+    /// The address property as published, with the address this provider actually joined the
+    /// node by. Those differ on the LE nodes that carry no address property at all:
+    /// <see cref="ResolveAddress"/> falls back to the hex in the instance id, so printing the
+    /// property alone would answer "what did this node join as?" with "(absent)" for a join
+    /// that plainly succeeded. Every other half of that join is keyed by this value, which
+    /// makes it worth spelling out even when no property backs it.
+    /// </summary>
+    static DiagnosticProperty DescribeAddress(uint devInst, string deviceId)
+    {
+        const string Key = "DEVPKEY_Bluetooth_DeviceAddress";
+        string raw = ReadRaw(devInst, DevPropKeys.BluetoothDeviceAddress);
+
+        // Neither source yielded an address. Worth stating outright: the pairing join and the
+        // unmatched-node fallback are both keyed by address, so this node reaches neither.
+        if (ResolveAddressWithSource(devInst, deviceId) is not { } resolved)
+        {
+            return new DiagnosticProperty("radio address", Key, raw,
+                "no address on this node and none in the instance id, so it joins to nothing");
+        }
+
+        return new DiagnosticProperty("radio address", Key, raw,
+            resolved.FromInstanceId
+                ? $"{FormatAddress(resolved.Address)} (recovered from the instance id)"
+                : FormatAddress(resolved.Address));
+    }
+
+    /// <summary>
+    /// The friendly name as published, with the name this provider derives from it: profile
+    /// suffix stripped, and DEVPKEY_Device_DeviceDesc standing in when the node publishes no
+    /// friendly name. The derived name is what an unmatched node is listed under, and it also
+    /// decides an exclusion — a node whose cleaned name matches a paired phone's is dropped —
+    /// so a node can be renamed or vanish entirely on a string the property line never shows.
+    /// </summary>
+    static DiagnosticProperty DescribeName(uint devInst)
+    {
+        const string Key = "DEVPKEY_Device_FriendlyName";
+        string raw = ReadRaw(devInst, DevPropKeys.FriendlyName);
+
+        string? friendly = ConfigManager.GetString(devInst, DevPropKeys.FriendlyName);
+        if (ReadNodeName(devInst) is not { } name)
+            return new DiagnosticProperty("node name", Key, raw, null);
+
+        // A name that survived CleanNodeName unchanged needs no explanation; the other two
+        // cases are precisely where the menu shows something this line otherwise would not.
+        string? note = friendly is null
+            ? " (no friendly name here, so DEVPKEY_Device_DeviceDesc supplied it)"
+            : name == friendly ? null : " (profile suffix stripped)";
+
+        return new DiagnosticProperty("node name", Key, raw, name + note);
+    }
+
     /// <summary>Reads one property both ways: the bytes on the wire and this app's reading of them.</summary>
     static DiagnosticProperty Describe(uint devInst, string name, string key, DevPropKey propertyKey)
     {
         if (ConfigManager.GetRaw(devInst, propertyKey) is not { } property)
-            return new DiagnosticProperty(name, key, "(absent)", null);
+            return new DiagnosticProperty(name, key, Absent, null);
 
-        string raw = $"{DevPropType.Describe(property.Type)} [{Convert.ToHexString(property.Bytes)}]";
+        string raw = FormatRaw(property);
 
         string? decoded = property.Type switch
         {
@@ -284,6 +358,19 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
         return new DiagnosticProperty(name, key, raw, decoded);
     }
+
+    /// <summary>What the Raw column reads when the node does not publish the property at all.</summary>
+    const string Absent = "(absent)";
+
+    static string FormatRaw((uint Type, byte[] Bytes) property) =>
+        $"{DevPropType.Describe(property.Type)} [{Convert.ToHexString(property.Bytes)}]";
+
+    /// <summary>
+    /// The Raw column for a property whose decoded half is derived rather than read straight
+    /// back, so those lines quote the same bytes <see cref="Describe"/> would have.
+    /// </summary>
+    static string ReadRaw(uint devInst, DevPropKey propertyKey) =>
+        ConfigManager.GetRaw(devInst, propertyKey) is { } property ? FormatRaw(property) : Absent;
 
     /// <summary>Newest battery reading per radio address, across all Bluetooth device nodes.</summary>
     static Dictionary<ulong, BatteryReading> ReadBatteryReadings()
@@ -318,9 +405,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                     // Presence is a poor stand-in — it stays true for a bonded LE device that is
                     // switched off — but it is all there is when no node published flags.
                     IsConnected: ConfigManager.GetBoolean(devInst, DevPropKeys.IsPresent) ?? false,
-                    NodeName: CleanNodeName(
-                        ConfigManager.GetString(devInst, DevPropKeys.FriendlyName)
-                        ?? ConfigManager.GetString(devInst, DevPropKeys.DeviceDesc)));
+                    NodeName: ReadNodeName(devInst));
 
                 // Several profile nodes of one device can each carry a reading; the most
                 // recently updated one wins.
@@ -350,20 +435,38 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     /// <paramref name="devInst"/> of 0 for a node that could not be located, in which case
     /// the id is the only source available.
     /// </summary>
-    static ulong? ResolveAddress(uint devInst, string deviceId)
+    static ulong? ResolveAddress(uint devInst, string deviceId) =>
+        ResolveAddressWithSource(devInst, deviceId)?.Address;
+
+    /// <summary>
+    /// <see cref="ResolveAddress"/> with the source it settled on, which only the dump cares
+    /// about. Kept as the single implementation of the rule so a line explaining the join
+    /// cannot drift from the join itself.
+    /// </summary>
+    static (ulong Address, bool FromInstanceId)? ResolveAddressWithSource(uint devInst, string deviceId)
     {
         if (ConfigManager.GetString(devInst, DevPropKeys.BluetoothDeviceAddress) is { Length: > 0 } text
             && ulong.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong address))
         {
-            return address;
+            return (address, false);
         }
 
         var match = AddressInInstanceId().Match(deviceId);
         return match.Success
             && ulong.TryParse(match.Groups[1].ValueSpan, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong fallback)
-            ? fallback
+            ? (fallback, true)
             : null;
     }
+
+    /// <summary>
+    /// The name this provider knows a node by: its friendly name, or its device description
+    /// when it publishes none, with the profile suffix stripped. Shared with the dump so the
+    /// name printed there is the name the menu uses.
+    /// </summary>
+    static string? ReadNodeName(uint devInst) =>
+        CleanNodeName(
+            ConfigManager.GetString(devInst, DevPropKeys.FriendlyName)
+            ?? ConfigManager.GetString(devInst, DevPropKeys.DeviceDesc));
 
     /// <summary>Strips the Bluetooth profile suffixes Windows appends to child node names.</summary>
     static string? CleanNodeName(string? name)
