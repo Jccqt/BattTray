@@ -129,13 +129,14 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
     /// <summary>
     /// Dumps both halves of the join this provider performs: the pairing records that supply
-    /// identity and connection, and the PnP nodes that supply battery. A device missing from
-    /// the menu is nearly always present in exactly one of these two lists.
+    /// identity and connection, and the PnP nodes that supply battery and link state. A device
+    /// missing from the menu is nearly always present in exactly one of these two lists.
     /// </summary>
     public IReadOnlyList<DiagnosticNode> GetDiagnostics()
     {
         var nodes = new List<DiagnosticNode>();
         var phoneAddresses = ReadPhoneAddresses();
+        var links = ReadLinkEvidence();
 
         foreach (var device in BluetoothApi.GetPairedDevices())
         {
@@ -166,7 +167,10 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                 uint devInst = ConfigManager.LocateDevNode(deviceId);
 
                 // Only nodes carrying a battery byte are worth printing; the rest of the
-                // Bluetooth tree is profile plumbing this provider never looks at.
+                // Bluetooth tree is profile plumbing this provider never looks at. The flag
+                // word lives out there on a node with no battery, but DescribeLink quotes it
+                // here rather than printing those nodes: every BTHENUM service node repeats
+                // its parent's flags, which on this machine turned four nodes into twenty-eight.
                 if (devInst == 0 || ConfigManager.GetByte(devInst, DevPropKeys.BluetoothBattery) is null)
                     continue;
 
@@ -179,7 +183,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                         Describe(devInst, "battery updated", "{104ea319-...bbe5} PID 7", DevPropKeys.BluetoothBatteryLastUpdated),
                         Describe(devInst, "radio address", "DEVPKEY_Bluetooth_DeviceAddress", DevPropKeys.BluetoothDeviceAddress),
                         Describe(devInst, "is present", "DEVPKEY_Device_IsPresent", DevPropKeys.IsPresent),
-                        DescribeLink(devInst),
+                        DescribeLink(devInst, deviceId, links),
                         Describe(devInst, "friendly name", "DEVPKEY_Device_FriendlyName", DevPropKeys.FriendlyName),
                     ]));
             }
@@ -189,19 +193,76 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     }
 
     /// <summary>
-    /// The BDIF_* flag word with the connection verdict drawn from it. Printed next to
-    /// "is present" on purpose: when those two disagree, the flags are the truthful one.
+    /// The node's own BDIF_* flag word, with the verdict this provider draws from the flags
+    /// held for that radio address. Printed next to "is present" on purpose: when those two
+    /// disagree, the flags are the truthful one. That verdict is what the menu shows for a
+    /// device with no pairing record; a paired device takes its state from fConnected on the
+    /// "paired:" node above instead, so compare the two before believing either.
     /// </summary>
-    static DiagnosticProperty DescribeLink(uint devInst)
+    /// <remarks>
+    /// Raw and verdict can come from different nodes, and have to: an LE device carries the
+    /// flag word on its parent while the battery sits on a child that has none, so a dump of
+    /// battery-bearing nodes alone would answer "why is this shown as disconnected?" with
+    /// "(absent)" on every line. Whenever the verdict was not drawn from this node's own
+    /// bytes, the node it did come from is named, so the join stays checkable.
+    /// </remarks>
+    static DiagnosticProperty DescribeLink(
+        uint devInst, string deviceId, IReadOnlyDictionary<ulong, LinkEvidence> links)
     {
-        if (ConfigManager.GetUInt32(devInst, DevPropKeys.BluetoothDeviceFlags) is not { } flags)
-            return new DiagnosticProperty("device flags", "DEVPKEY_Bluetooth_DeviceFlags", "(absent)", null);
+        const string Key = "DEVPKEY_Bluetooth_DeviceFlags";
 
-        return new DiagnosticProperty(
-            "device flags", "DEVPKEY_Bluetooth_DeviceFlags", $"UINT32 [0x{flags:X8}]",
-            IsLinkUp(flags)
-                ? "BDIF_CONNECTED or BDIF_LE_CONNECTED set -> connected"
-                : "connected bits clear -> disconnected, so any battery value here is cached");
+        uint? own = ConfigManager.GetUInt32(devInst, DevPropKeys.BluetoothDeviceFlags);
+        string raw = own is { } flags ? $"UINT32 [0x{flags:X8}]" : "(absent)";
+
+        if (ResolveAddress(devInst, deviceId) is not { } address || !links.TryGetValue(address, out var evidence))
+        {
+            return new DiagnosticProperty("device flags", Key, raw,
+                "no node at this radio address publishes flags, so the node-side reading falls back to DEVPKEY_Device_IsPresent");
+        }
+
+        string verdict = IsLinkUp(evidence.Flags)
+            ? "BDIF_CONNECTED or BDIF_LE_CONNECTED set -> connected"
+            : "connected bits clear -> disconnected, so any battery value here is cached";
+
+        // Naming the source node is only worth the line when this node's own bytes do not
+        // already say the same thing: either it published none, or it disagrees and was
+        // outvoted. Siblings usually just repeat their parent's flag word verbatim.
+        bool ownSaysTheSame = own is { } value && IsLinkUp(value) == IsLinkUp(evidence.Flags);
+
+        return new DiagnosticProperty("device flags", Key, raw,
+            ownSaysTheSame ? verdict : $"{verdict} (0x{evidence.Flags:X8} on {evidence.DeviceId})");
+    }
+
+    /// <summary>
+    /// The flag word each radio address is judged by, tagged with the node it was read from.
+    /// Resolved exactly as <see cref="ReadBatteryReadings"/> resolves it — link state belongs
+    /// to the device rather than to whichever node happens to publish it, and one node
+    /// reporting a live link is enough — so the dump cannot contradict the menu it exists to
+    /// explain.
+    /// </summary>
+    static Dictionary<ulong, LinkEvidence> ReadLinkEvidence()
+    {
+        var links = new Dictionary<ulong, LinkEvidence>();
+
+        foreach (var enumerator in Enumerators)
+        {
+            foreach (var deviceId in ConfigManager.GetDeviceIds(enumerator))
+            {
+                uint devInst = ConfigManager.LocateDevNode(deviceId);
+                if (devInst == 0 || ResolveAddress(devInst, deviceId) is not { } address)
+                    continue;
+
+                if (ConfigManager.GetUInt32(devInst, DevPropKeys.BluetoothDeviceFlags) is not { } flags)
+                    continue;
+
+                // A node claiming the link is up outranks one that does not, matching the
+                // OR in ReadBatteryReadings; otherwise the first node found stands.
+                if (!links.TryGetValue(address, out var existing) || (IsLinkUp(flags) && !IsLinkUp(existing.Flags)))
+                    links[address] = new LinkEvidence(deviceId, flags);
+            }
+        }
+
+        return links;
     }
 
     /// <summary>Reads one property both ways: the bytes on the wire and this app's reading of them.</summary>
@@ -389,6 +450,9 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     static string FormatAddress(ulong address) => address.ToString("X12", CultureInfo.InvariantCulture);
 
     sealed record BatteryReading(int Percent, DateTime? UpdatedUtc, bool IsConnected, string? NodeName);
+
+    /// <summary>A BDIF_* flag word and the device instance id it was read from.</summary>
+    sealed record LinkEvidence(string DeviceId, uint Flags);
 
     /// <summary>
     /// The radio address as it is spelled in a device instance id. Rather than enumerate the
