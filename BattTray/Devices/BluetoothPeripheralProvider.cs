@@ -153,10 +153,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                         device.IsConnected ? "TRUE" : "FALSE", null),
                     // Without this line a phone-filtered device would simply be absent from
                     // the menu with nothing here explaining why.
-                    new DiagnosticProperty(
-                        "phone services", "phone-only service GUIDs on this device's PnP nodes",
-                        phoneAddresses.Contains(device.Address) ? "present" : "absent",
-                        IsPhone(device, phoneAddresses) ? "treated as a phone, excluded" : null),
+                    DescribePhoneFilter(device, phoneAddresses),
                 ]));
         }
 
@@ -190,6 +187,31 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
         }
 
         return nodes;
+    }
+
+    /// <summary>
+    /// The verdict <see cref="IsPhone"/> reached for a pairing record, naming the signal that
+    /// reached it. The value column can only speak for the service GUIDs this property is
+    /// sourced from, so a phone recognised by its class-of-device alone reads "absent" there;
+    /// without the deciding signal spelled out beside it, that pair reads as a contradiction
+    /// and invites the conclusion that the phone filter was not what dropped the device.
+    /// </summary>
+    static DiagnosticProperty DescribePhoneFilter(BluetoothDeviceInfo device, HashSet<ulong> phoneAddresses)
+    {
+        bool byClass = Categorize(device.ClassOfDevice) == DeviceCategory.Phone;
+        bool byService = phoneAddresses.Contains(device.Address);
+
+        string? verdict = (byClass, byService) switch
+        {
+            (true, true) => "treated as a phone, excluded (class of device and service GUID)",
+            (true, false) => "treated as a phone, excluded (class of device)",
+            (false, true) => "treated as a phone, excluded (service GUID)",
+            _ => null,
+        };
+
+        return new DiagnosticProperty(
+            "phone services", "phone-only service GUIDs on this device's PnP nodes",
+            byService ? "present" : "absent", verdict);
     }
 
     /// <summary>
