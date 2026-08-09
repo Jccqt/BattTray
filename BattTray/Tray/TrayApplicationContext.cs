@@ -31,7 +31,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// <summary>Theme the loaded icon was chosen for; null until the first load.</summary>
     bool? _iconMatchesLightTheme;
 
-    public TrayApplicationContext()
+    /// <summary>The pending one-shot idle handler, held so it can be detached; see ShowSettingsWhenIdle.</summary>
+    EventHandler? _startupIdle;
+
+    /// <param name="showSettings">
+    /// Opens the settings dialog once the app is up, as the acknowledgement a launch the
+    /// user performed by hand deserves.
+    /// </param>
+    public TrayApplicationContext(bool showSettings)
     {
         // No image column: the rows carry a percentage in their text, so a glyph beside
         // each one would only add width and repeat what the words already say.
@@ -76,6 +83,45 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // Populate up front: an empty ContextMenuStrip can refuse to open, which would
         // mean the Opening handler never gets a chance to fill it.
         RebuildMenu();
+
+        if (showSettings)
+            ShowSettingsWhenIdle();
+    }
+
+    /// <summary>
+    /// Answers a second launch of the exe, which has no UI of its own and exits at once.
+    /// </summary>
+    /// <remarks>
+    /// Arrives on this thread through the synchronization context, so it can land in the
+    /// middle of a menu or a dialog the user already has open. Both are handled: the menu
+    /// is dismissed, because a dialog rising through an open drop-down looks like a fault,
+    /// and an open dialog is raised rather than duplicated by <see cref="ShowSettings"/>.
+    /// </remarks>
+    public void ShowSettingsOnRequest()
+    {
+        _menu.Close(ToolStripDropDownCloseReason.AppFocusChange);
+        ShowSettings();
+    }
+
+    /// <summary>Opens the settings dialog as soon as the message loop is running.</summary>
+    /// <remarks>
+    /// Not called straight from the constructor: <see cref="Form.ShowDialog()"/> pumps
+    /// messages itself, so the dialog would go up while this object was still half-built and
+    /// before <see cref="Application.Run(ApplicationContext)"/> had been reached — leaving
+    /// the tray icon unresponsive behind it. Idle is the first lull after the loop starts,
+    /// which is the earliest moment the app is genuinely running.
+    /// </remarks>
+    void ShowSettingsWhenIdle()
+    {
+        _startupIdle = (_, _) =>
+        {
+            // Once only: idle fires again every time the app runs out of messages.
+            Application.Idle -= _startupIdle;
+            _startupIdle = null;
+            ShowSettings();
+        };
+
+        Application.Idle += _startupIdle;
     }
 
     /// <summary>
@@ -334,9 +380,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (disposing)
         {
-            // Static event: leaving this attached would keep the context alive for the life
-            // of the process.
+            // Static events: leaving these attached would keep the context alive for the
+            // life of the process.
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            if (_startupIdle is not null)
+            {
+                Application.Idle -= _startupIdle;
+                _startupIdle = null;
+            }
             // Global hooks: they outlive the object unless taken down explicitly.
             _outsideInteraction.Dispose();
             _timer.Stop();

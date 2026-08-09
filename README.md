@@ -36,6 +36,12 @@ The app has no resident window. It adds a tray icon; right-click it for the devi
 `Settings…`, or `Exit`. Hovering shows the lowest connected level without opening
 anything. Only one instance runs at a time.
 
+Starting the exe yourself opens the settings dialog, so a launch that only adds one more
+icon to a crowded tray still says it worked. Starting it again while it is already running
+does the same — the second process asks the first for the dialog and exits, rather than
+disappearing without a word. Windows starting the app at login does neither: the Run entry
+passes `--autostart`, and that launch goes straight to the tray.
+
 ### Settings
 
 `Settings…` opens a small dialog, built on demand and disposed on close so the idle
@@ -43,7 +49,7 @@ footprint is unchanged (~10 MB).
 
 | Setting | Notes |
 |---|---|
-| Start with Windows | Writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No admin rights, no scheduled task. |
+| Start with Windows | Writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` with `--autostart`. No admin rights, no scheduled task. |
 | Warn me when a device runs low | Balloon tip naming the device. Off does not mean "catch up later" — see below. |
 | Alert at or below | 10 / 20 / 30% only. |
 | Hide disconnected devices | Display only; a hidden device can still raise a low-battery alert. |
