@@ -1,5 +1,7 @@
 using System.Globalization;
 using BattTray.Devices;
+// Top-level statements compile into the global namespace, so the probe needs naming.
+using BattTray.Diagnostics;
 
 // Accuracy harness for BattTray's battery providers.
 //
@@ -20,6 +22,8 @@ if (args.Contains("--help") || args.Contains("-h"))
         Usage: BattTray.Diagnostics [options]
 
           --once             Dump the raw evidence and exit, without watching.
+          --probe            Sweep every device node for battery-shaped properties, and exit.
+          --all              With --probe, dump every node rather than peripheral-looking ones.
           --interval <sec>   Seconds between scans while watching (default 5).
           --log <path>       Also append everything to this file.
           --help             This message.
@@ -36,6 +40,15 @@ var observations = new Dictionary<string, DeviceLog>(StringComparer.Ordinal);
 Write($"BattTray diagnostics — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
 Write($"Machine: {Environment.MachineName}   OS: {Environment.OSVersion.VersionString}");
 Write(string.Empty);
+
+// The probe answers a different question from the rest of this tool — what Windows knows
+// about devices no provider covers yet — so it runs alone rather than ahead of the watch.
+if (args.Contains("--probe"))
+{
+    Probe.Run(Write, dumpEveryNode: args.Contains("--all"));
+    log?.Dispose();
+    return 0;
+}
 
 DumpRawEvidence();
 

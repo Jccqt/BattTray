@@ -156,6 +156,31 @@ dotnet run --project tools/BattTray.Diagnostics -- --interval 30 --log drain.txt
 Any new transport is covered the moment its provider implements `GetDiagnostics()`, which
 has an empty default so a provider can be prototyped without one.
 
+### Probing for a transport nobody has written a provider for
+
+`--probe` asks a different question: not "is this reading right?" but "does Windows already
+know a battery percentage for devices BattTray does not cover yet?". It sweeps every present
+PnP node — all enumerators, not just the Bluetooth ones — asks each what property keys it
+publishes, and sorts anything battery-shaped into three tiers: keys under the battery format
+GUID, `DEVPROP_TYPE_BYTE` values in 0-100, and integers in 1-100 on peripheral-looking nodes.
+
+```bash
+dotnet run --project tools/BattTray.Diagnostics -- --probe --log probe.txt
+```
+
+Run it before writing a provider. On the development machine (201 present nodes, 11,851
+properties, ~1.1 s) the answer was **no**: every battery property found was under a `BTH*`
+enumerator, already covered. The decisive case was one device present on two transports at
+once — an 8BitDo Ultimate 2C, which reports 87% on its `BTHLE` node, has neither a battery
+key nor any byte in 0-100 on the `USB\VID_2DC8&PID_301C` and `HID\VID_2DC8&PID_301C` nodes
+it publishes in its non-Bluetooth mode. A battery Windows demonstrably knows about over one
+transport is absent over the other, so a USB provider cannot be a copy of the Bluetooth one:
+the percentage will have to come from HID reports (usage page 0x85), not a device property.
+
+Add `--all` to dump every node rather than the peripheral-looking ones. Device *interface*
+properties are not swept — that needs SetupAPI and a class GUID per interface, and is the
+next place to look if a node dump comes back empty.
+
 ## Design notes
 
 `cfgmgr32` was chosen over the WinRT `DeviceInformation` APIs after measuring both on real

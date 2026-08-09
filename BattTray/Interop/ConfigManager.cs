@@ -12,20 +12,50 @@ namespace BattTray.Interop;
 internal static class ConfigManager
 {
     const uint CR_SUCCESS = 0;
+    const uint CM_GETIDLIST_FILTER_NONE = 0x00000000;
     const uint CM_GETIDLIST_FILTER_ENUMERATOR = 0x00000001;
 
-    /// <summary>Device instance ids beneath a PnP enumerator, e.g. "BTHENUM".</summary>
-    public static string[] GetDeviceIds(string enumerator)
+    /// <summary>
+    /// Device instance ids beneath a PnP enumerator, e.g. "BTHENUM", or of every present
+    /// device when <paramref name="enumerator"/> is null.
+    /// </summary>
+    public static string[] GetDeviceIds(string? enumerator = null)
     {
-        if (CM_Get_Device_ID_List_SizeW(out uint length, enumerator, CM_GETIDLIST_FILTER_ENUMERATOR) != CR_SUCCESS || length == 0)
+        uint filter = enumerator is null ? CM_GETIDLIST_FILTER_NONE : CM_GETIDLIST_FILTER_ENUMERATOR;
+
+        if (CM_Get_Device_ID_List_SizeW(out uint length, enumerator, filter) != CR_SUCCESS || length == 0)
             return [];
 
         var buffer = new char[length];
-        if (CM_Get_Device_ID_ListW(enumerator, buffer, length, CM_GETIDLIST_FILTER_ENUMERATOR) != CR_SUCCESS)
+        if (CM_Get_Device_ID_ListW(enumerator, buffer, length, filter) != CR_SUCCESS)
             return [];
 
         // The list is a double-null-terminated sequence of strings.
         return new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Every property key a device node publishes. The reading side of this class asks for
+    /// keys it already knows; this asks the node what it has, which is the only way to find a
+    /// battery property nobody has documented a name for.
+    /// </summary>
+    public static DevPropKey[] GetPropertyKeys(uint devInst)
+    {
+        if (devInst == 0)
+            return [];
+
+        uint count = 0;
+        // First call sizes the array; it is expected to fail with CR_BUFFER_SMALL.
+        CM_Get_DevNode_Property_Keys(devInst, null, ref count, 0);
+        if (count == 0)
+            return [];
+
+        var keys = new DevPropKey[count];
+        if (CM_Get_DevNode_Property_Keys(devInst, keys, ref count, 0) != CR_SUCCESS)
+            return [];
+
+        // A node can shed a property between the two calls, leaving the tail unwritten.
+        return count == keys.Length ? keys : keys[..(int)count];
     }
 
     /// <summary>Resolves a device instance id to a devnode handle, or 0 if it is gone.</summary>
@@ -107,6 +137,11 @@ internal static class ConfigManager
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
     static extern uint CM_Locate_DevNodeW(out uint pdnDevInst, string pDeviceID, uint ulFlags);
+
+    // Exported without the W suffix the other property call carries, and it takes no strings.
+    [DllImport("cfgmgr32.dll", ExactSpelling = true)]
+    static extern uint CM_Get_DevNode_Property_Keys(
+        uint dnDevInst, [Out] DevPropKey[]? propertyKeyArray, ref uint propertyKeyCount, uint ulFlags);
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
     static extern uint CM_Get_DevNode_PropertyW(

@@ -4,10 +4,22 @@ namespace BattTray.Interop;
 
 /// <summary>Win32 DEVPROPKEY: a property format GUID plus a property id.</summary>
 [StructLayout(LayoutKind.Sequential)]
-internal readonly struct DevPropKey(Guid formatId, uint propertyId)
+internal readonly struct DevPropKey(Guid formatId, uint propertyId) : IEquatable<DevPropKey>
 {
     public readonly Guid FormatId = formatId;
     public readonly uint PropertyId = propertyId;
+
+    // Equality is hand-written because the default for a struct falls back to reflection over
+    // its fields, and the diagnostics probe groups tens of thousands of these by key.
+    public bool Equals(DevPropKey other) => FormatId == other.FormatId && PropertyId == other.PropertyId;
+
+    public override bool Equals(object? obj) => obj is DevPropKey other && Equals(other);
+
+    public override int GetHashCode() => HashCode.Combine(FormatId, PropertyId);
+
+    public static bool operator ==(DevPropKey left, DevPropKey right) => left.Equals(right);
+
+    public static bool operator !=(DevPropKey left, DevPropKey right) => !left.Equals(right);
 }
 
 /// <summary>The DEVPROP_TYPE_* values we actually read.</summary>
