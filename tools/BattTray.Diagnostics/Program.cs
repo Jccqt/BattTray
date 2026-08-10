@@ -22,8 +22,9 @@ if (args.Contains("--help") || args.Contains("-h"))
         Usage: BattTray.Diagnostics [options]
 
           --once             Dump the raw evidence and exit, without watching.
-          --probe            Sweep every device node for battery-shaped properties, and exit.
-          --all              With --probe, dump every node rather than peripheral-looking ones.
+          --probe            Sweep every device node and interface for battery-shaped
+                             properties, and exit.
+          --all              With --probe, dump everything rather than peripheral-looking ones.
           --interval <sec>   Seconds between scans while watching (default 5).
           --log <path>       Also append everything to this file.
           --help             This message.
