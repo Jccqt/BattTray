@@ -126,8 +126,20 @@ ago the reading was taken.
 **Charging state is not available over Bluetooth.** A full dump of every device property
 on a battery-reporting node showed no charging flag — Bluetooth Classic simply does not
 expose one. `ChargeState` is therefore tri-state (`Unknown` / `Discharging` / `Charging`)
-and Bluetooth always reports `Unknown`, because "not charging" would be a guess. Wired USB
-HID devices do report charging, so the field will earn its keep once that provider lands.
+and Bluetooth always reports `Unknown`, because "not charging" would be a guess.
+
+A wired transport is the obvious thing to fill the field in, but on the hardware here that
+is weaker than it sounds. A cable being attached is a real charging signal — the catch is
+that the node which knows about the cable is not the node which knows the percentage.
+Windows files a device's BLE and USB faces as separate containers under different PIDs: this
+controller is container `3718a527-31ac-5f1f-ac4b-b763b32cf562` at PID `301B` over BLE and
+`fcb6d6dc-5fca-5a5b-846e-f04e82c61d38` at PID `310A` wired. Correlating the two is a
+vendor-id-and-name heuristic rather than a lookup — the VID matches, the container id does
+not, and the wired composite node calls itself only "USB Composite Device", with the product
+string on its HID interfaces ("8BitDo Ultimate 2C Wireless Controller") not an exact match
+for the BLE node's name ("8BitDo Ultimate 2C Wireless") either. The other route is a device
+that declares charge in a HID report, which none attached here does — see
+[`--probe-hid`](#probing-for-a-battery-in-hid-report-descriptors).
 
 ## Diagnostics
 
@@ -168,19 +180,33 @@ GUID, `DEVPROP_TYPE_BYTE` values in 0-100, and integers in 1-100 on peripheral-l
 dotnet run --project tools/BattTray.Diagnostics -- --probe --log probe.txt
 ```
 
-Run it before writing a provider. On the development machine (201 present nodes, 11,851
-properties, ~1.1 s) the answer was **no**: every battery property found was under a `BTH*`
-enumerator, already covered. The decisive case was one device present on two transports at
-once — an 8BitDo Ultimate 2C, which reports 87% on its `BTHLE` node, has neither a battery
-key nor any byte in 0-100 on the `USB\VID_2DC8&PID_301C` and `HID\VID_2DC8&PID_301C` nodes
-it publishes in its non-Bluetooth mode. A battery Windows demonstrably knows about over one
-transport is absent over the other, so a USB provider cannot be a copy of the Bluetooth one:
-the percentage will have to come from HID reports (usage page 0x85), not a device property.
+Run it before writing a provider. On the development machine (216 present nodes, 12,701
+properties, 234 distinct keys, ~1.8 s) the answer was **no**: every battery property found
+was under a `BTH*` enumerator, already covered. The decisive case was one device present on
+two transports at once — an 8BitDo Ultimate 2C, paired over BLE and plugged in by cable at
+the same moment. Over BLE it is `BTHLE\Dev_e417d8248eb3`, with `BTHLEDevice` children under
+`VID&022dc8_PID&301b`, and it reports 87%. Over the cable the same controller enumerates as
+`USB\VID_2DC8&PID_310A`, a composite device with three interfaces — `MI_00` an XInput pad,
+`MI_01` carrying keyboard, consumer-control and mouse collections, `MI_02` vendor-defined —
+and not one of those nodes carries a battery key or a byte in 0-100. The PID is a function
+of the connection mode rather than of the device, which is why the mode is worth naming
+beside the id: `301B` over BLE, `310A` wired.
 
-Add `--all` to dump every node rather than the peripheral-looking ones. Device *interfaces*
-are swept the same way and reported separately, because a node and its interfaces are
-separate property stores rather than two views of one — and that sweep found nothing
-outside the Bluetooth enumerators either.
+Device *interfaces* are swept the same way and reported separately, because a node and its
+interfaces are separate property stores rather than two views of one: a node carries what
+the PnP tree knows about a device, an interface what a driver chose to publish alongside the
+handle it hands out. That sweep (286 interfaces, 2,199 properties, ~0.2 s) closed the gap
+the node sweep left. No interface publishes any key under the battery format GUID at all,
+and the only percentage-shaped bytes in it were Bluetooth GATT plumbing and a storage
+volume. Add `--all` to dump every subject rather than the peripheral-looking ones.
+
+Between them the two sweeps cover everything Windows publishes as a *property* about a
+device, so this is "not there" rather than "not found yet": a battery Windows demonstrably
+knows about over one transport is absent over the other, and a USB provider therefore cannot
+be a copy of the Bluetooth one. The percentage will have to come from HID reports — and from
+any of three usage pages, not only the documented `0x85` (Battery System): `0x06` usage
+`0x20` (Battery Strength) is what many modern gamepads and BLE-derived HID devices actually
+use, and `0x84` (Power Device) is a third possibility. `--probe-hid` below checks all three.
 
 ### Probing for a battery in HID report descriptors
 
@@ -201,13 +227,12 @@ bit size, logical and physical range and link collection. Interfaces that refuse
 reported with their `GetLastError` rather than skipped: unopened is a different answer from
 no battery.
 
-Anything on usage page `0x85` (Battery System), `0x84` (Power Device) or `0x06` usage `0x20`
-(Battery Strength) is flagged. All three are checked deliberately — the third is the one
-modern gamepads and BLE-derived HID devices tend to use, and looking only at `0x85` would
-miss them. Where a *feature* report carries a flagged usage it is read back on the spot, with
-the raw bytes printed next to the decoded value; a device may only refresh a feature report
-when polled, so read it twice before trusting a fixed number, and check the logical range
-before reading a value as a percentage.
+Anything on any of the three pages above is flagged, and the dump's own header names them, so
+a reader has the list in front of them rather than in the previous section. Where a *feature*
+report carries a flagged usage it is read back on the spot, with the raw bytes printed next
+to the decoded value; a device may only refresh a feature report when polled, so read it
+twice before trusting a fixed number, and check the logical range before reading a value as
+a percentage.
 
 On the development machine the answer is **no**: 15 to 20 HID interfaces depending on what is
 awake, every one of them opened, and not one declaring a battery usage on any of the three
@@ -215,9 +240,11 @@ pages. That is a fact about what is attached, not about the approach, which is t
 flag exists — the day a mouse, headset or controller that does report over HID is plugged in,
 the answer is one command away.
 
-The sweep costs ~105 ms, nearly all of it in opening handles and parsing descriptors rather
-than in enumeration (~2 ms). That is fine on demand and far outside the single-digit
-milliseconds `IPeripheralProvider` is polled against, which is why this lives in the
+The sweep costs ~165 ms for the 20 interfaces above, nearly all of it in opening handles and
+parsing descriptors rather than in enumeration (~5 ms) — the cost tracks how many devices are
+attached, so it is the ratio rather than either figure that carries. That is fine on demand
+and far outside the single-digit milliseconds `IPeripheralProvider` is polled against,
+which is why this lives in the
 diagnostics tool and why a HID provider will need a cheaper shape than a full sweep. That
 shape is a cache invalidated by device-change events rather than rebuilt per poll — see
 [Design notes](#device-change-notifications-and-the-poll-behind-them), where the seam for
@@ -241,8 +268,8 @@ the timer for everything else. The split follows what each one can actually obse
 poll is what moves a percentage and the interval setting still means what it says.
 
 The events were added for the transport that does not exist yet. Enumerating HID
-interfaces costs ~2 ms, but opening all 15 handles and parsing their capabilities costs
-~105 ms (measured by `--probe-hid`, above), and `IPeripheralProvider` is polled from the
+interfaces costs ~5 ms, but opening all 20 handles and parsing their capabilities costs
+~160 ms (measured by `--probe-hid`, above), and `IPeripheralProvider` is polled from the
 UI thread against a single-digit-millisecond budget — so a HID provider cannot re-read
 everything per poll, and the only safe way to hold the result between polls is to know
 when it went out of date. `InvalidateDeviceCache()` on the provider interface is that
@@ -252,8 +279,8 @@ Two honest caveats about what that bought the transport already shipped. The **c
 close to pointless here: a full refresh measures ~10 ms in a Release build on the
 development machine, of which re-listing the device ids is only ~1 ms — the rest is the
 pairing-record call and the property reads, neither of which a device-change event can
-authorise caching. (The ~2 ms quoted above and below is the `cfgmgr32` sweep alone, not a
-whole scan.) The Bluetooth provider caches because the seam should have a user that
+authorise caching. (The ~2 ms quoted above is the `cfgmgr32` sweep alone, not a whole
+scan.) The Bluetooth provider caches because the seam should have a user that
 exercises it, not because 1 ms mattered. The **events** are the part that earns its keep,
 and even then not in the menu — the menu was never the stale part, since it rescans as it
 opens. It is the hover tooltip and the low-battery check that were stale, and both now
