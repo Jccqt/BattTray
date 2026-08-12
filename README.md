@@ -177,9 +177,48 @@ it publishes in its non-Bluetooth mode. A battery Windows demonstrably knows abo
 transport is absent over the other, so a USB provider cannot be a copy of the Bluetooth one:
 the percentage will have to come from HID reports (usage page 0x85), not a device property.
 
-Add `--all` to dump every node rather than the peripheral-looking ones. Device *interface*
-properties are not swept — that needs SetupAPI and a class GUID per interface, and is the
-next place to look if a node dump comes back empty.
+Add `--all` to dump every node rather than the peripheral-looking ones. Device *interfaces*
+are swept the same way and reported separately, because a node and its interfaces are
+separate property stores rather than two views of one — and that sweep found nothing
+outside the Bluetooth enumerators either.
+
+### Probing for a battery in HID report descriptors
+
+`--probe-hid` covers the one place `--probe` cannot reach. A HID battery is not a device
+property but a usage inside the report descriptor, invisible to the PnP tree that publishes
+everything else about the device. With a property-based USB provider ruled out, this is what
+says whether the remaining route — reading HID reports — has anything to read.
+
+```bash
+dotnet run --project tools/BattTray.Diagnostics -- --probe-hid --log hid.txt
+```
+
+It opens every `GUID_DEVINTERFACE_HID` interface with `dwDesiredAccess = 0` — enough for the
+descriptor, and the only access many devices will grant, since plenty are held exclusively by
+their own software — then prints per interface the product string, VID/PID/version, top-level
+usage, the three report lengths, and every value and button cap with its report id, usage,
+bit size, logical and physical range and link collection. Interfaces that refuse to open are
+reported with their `GetLastError` rather than skipped: unopened is a different answer from
+no battery.
+
+Anything on usage page `0x85` (Battery System), `0x84` (Power Device) or `0x06` usage `0x20`
+(Battery Strength) is flagged. All three are checked deliberately — the third is the one
+modern gamepads and BLE-derived HID devices tend to use, and looking only at `0x85` would
+miss them. Where a *feature* report carries a flagged usage it is read back on the spot, with
+the raw bytes printed next to the decoded value; a device may only refresh a feature report
+when polled, so read it twice before trusting a fixed number, and check the logical range
+before reading a value as a percentage.
+
+On the development machine the answer is **no**: 15 to 20 HID interfaces depending on what is
+awake, every one of them opened, and not one declaring a battery usage on any of the three
+pages. That is a fact about what is attached, not about the approach, which is the reason the
+flag exists — the day a mouse, headset or controller that does report over HID is plugged in,
+the answer is one command away.
+
+The sweep costs ~105 ms, nearly all of it in opening handles and parsing descriptors rather
+than in enumeration (~2 ms). That is fine on demand and far outside the single-digit
+milliseconds `IPeripheralProvider` is polled against, which is why this lives in the
+diagnostics tool and why a HID provider will need a cheaper shape than a full sweep.
 
 ## Design notes
 

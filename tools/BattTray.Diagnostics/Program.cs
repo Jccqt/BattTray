@@ -25,6 +25,8 @@ if (args.Contains("--help") || args.Contains("-h"))
           --probe            Sweep every device node and interface for battery-shaped
                              properties, and exit.
           --all              With --probe, dump everything rather than peripheral-looking ones.
+          --probe-hid        Sweep every HID interface for battery usages in its report
+                             descriptor, which no device property exposes, and exit.
           --interval <sec>   Seconds between scans while watching (default 5).
           --log <path>       Also append everything to this file.
           --help             This message.
@@ -42,11 +44,21 @@ Write($"BattTray diagnostics — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
 Write($"Machine: {Environment.MachineName}   OS: {Environment.OSVersion.VersionString}");
 Write(string.Empty);
 
-// The probe answers a different question from the rest of this tool — what Windows knows
-// about devices no provider covers yet — so it runs alone rather than ahead of the watch.
+// The probes answer a different question from the rest of this tool — what Windows knows
+// about devices no provider covers yet — so they run alone rather than ahead of the watch.
 if (args.Contains("--probe"))
 {
     Probe.Run(Write, dumpEveryNode: args.Contains("--all"));
+    log?.Dispose();
+    return 0;
+}
+
+// Separate from --probe rather than folded into it: that sweep reads device properties, this
+// one opens handles and parses report descriptors, and the second costs fifty times the first.
+// They also answer in different terms, and running both would bury the shorter answer.
+if (args.Contains("--probe-hid"))
+{
+    HidProbe.Run(Write);
     log?.Dispose();
     return 0;
 }
