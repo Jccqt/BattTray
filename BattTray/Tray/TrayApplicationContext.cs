@@ -316,19 +316,33 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (devices.Count == 0)
             return "BattTray — no devices";
 
-        var connected = devices.Where(d => d.IsConnected && d.BatteryPercent is not null).ToList();
+        // Two questions, and they used to be one: what is here, and what will talk. A device
+        // can be connected and silent — an XInput slot answering BATTERY_TYPE_WIRED, a
+        // headset that publishes no battery node — and folding that into "none reporting"
+        // told the user nothing was there while a controller sat plainly connected.
+        var live = devices.Where(d => d.IsConnected).ToList();
+        var reporting = live.Where(d => d.BatteryPercent is not null).ToList();
         var lowest = _monitor.LowestConnected;
 
-        string text = connected.Count switch
+        string text = (live.Count, reporting.Count) switch
         {
-            0 => $"BattTray — {devices.Count} device(s), none reporting",
-            1 => $"{connected[0].Name}: {connected[0].BatteryText}",
+            // Everything on show is a leftover reading. Worth saying once here, because it
+            // is the one thing every row in the menu below has in common.
+            (0, _) => $"BattTray — {devices.Count} device(s), none connected",
+
+            // Present and silent. Naming it beats counting: the complaint this answers is
+            // "my controller is right there", and the answer is that it is seen and will
+            // not say. The menu row alongside puts it the same way.
+            (1, 0) => $"{live[0].Name}: no battery reported",
+            (_, 0) => $"{live.Count} devices connected, none reporting a level",
+
+            (_, 1) => $"{reporting[0].Name}: {reporting[0].BatteryText}",
 
             // The lowest device is named here, where it used to contribute a bare number.
             // A band forces the issue — "lowest low" is not a sentence — but the naming is
             // owed either way: an unattributed reading is the same ambiguity that keeps a
             // level off the tray icon. Over-long lines are truncated below as they always were.
-            _ => $"{connected.Count} devices — lowest {lowest?.Name}: {lowest?.BatteryText}",
+            _ => $"{reporting.Count} devices — lowest {lowest?.Name}: {lowest?.BatteryText}",
         };
 
         return text.Length <= MaxTooltipLength ? text : text[..(MaxTooltipLength - 1)] + "…";
@@ -428,9 +442,24 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Enabled = false,
         };
 
+    /// <summary>
+    /// One menu row: the name, the reading where there is one, and what the device is doing.
+    /// </summary>
+    /// <remarks>
+    /// "No battery reported" rather than a blank, because a device that publishes no level is
+    /// a thing worth stating: a connected XInput slot answering BATTERY_TYPE_WIRED and a
+    /// connected headset with no battery node are both present, working, and silent about
+    /// charge, and a row that simply omitted the clause would read as though the reading had
+    /// been forgotten.
+    ///
+    /// The charging arm has never run. No provider sets <see cref="ChargeState.Charging"/> —
+    /// see XInputGamepadProvider for why the one byte that looked as though it could does
+    /// not — so it is kept as the rendering a charge source would land on rather than as
+    /// something the menu has shown.
+    /// </remarks>
     static string DescribeDevice(Peripheral device)
     {
-        string battery = device.BatteryText ?? "battery unknown";
+        string battery = device.BatteryText ?? "no battery reported";
 
         string status = device switch
         {

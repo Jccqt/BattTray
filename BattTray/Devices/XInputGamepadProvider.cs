@@ -9,10 +9,11 @@ namespace BattTray.Devices;
 /// <remarks>
 /// What this covers is narrower than "gamepads", and the narrowing is the point:
 /// <list type="bullet">
-/// <item>A pad on a cable reports BATTERY_TYPE_WIRED, which means "there is no battery to
-/// ask about". The BATTERY_LEVEL byte beside it still reads FULL, because the field has to
-/// hold something; taking it would put a confident 100% in the tray for a device that never
-/// said so. A wired pad therefore contributes no peripheral at all.</item>
+/// <item>A slot reporting BATTERY_TYPE_WIRED means "there is no battery to ask about". The
+/// BATTERY_LEVEL byte beside it still reads FULL, because the field has to hold something;
+/// taking it would put a confident 100% in the tray for a device that never said so. Such a
+/// slot therefore contributes a peripheral with no reading at all — the controller is there,
+/// and nothing about its battery is known.</item>
 /// <item>What is left is a pad on a radio — this controller in 2.4 GHz dongle mode, an Xbox
 /// pad on its own dongle — reporting one of four levels. Four. Not a percentage, and the
 /// menu never shows it as one; see <see cref="Peripheral.BatteryBand"/>.</item>
@@ -23,8 +24,25 @@ namespace BattTray.Devices;
 /// Discharging, while the pad was plugged in and charging. Those milliwatt-hours are the
 /// same four-step byte scaled up, so the WinRT dependency would buy a number that is no more
 /// accurate, reads as though it were, and is wrong about the charge direction as well.
-/// <see cref="ChargeState"/> is accordingly left Unknown here, exactly as Bluetooth leaves
-/// it: the one thing XInput will say about a cable is said by refusing to report a battery.
+///
+/// WIRED is not a cable, and this was measured rather than reasoned. It reads as one — the
+/// name says so, and it is tempting to spend it on <see cref="ChargeState.Charging"/>, which
+/// is exactly what an earlier revision of this file did. On the 8BitDo Ultimate 2C with the
+/// cable physically out and the pad on its own 2.4 GHz receiver, slot 0 still answered
+/// BATTERY_TYPE_WIRED: same VID_2DC8, same PID_310A, same &amp;IG_00 interface the cable
+/// produced, because the receiver is itself a bus-powered USB device. Nothing in the answer
+/// separates a pad on a cable from a pad on a dongle, so a row saying either would be wrong
+/// half the time. The byte supports one statement — XInput has no battery for this device —
+/// and that is all the peripheral claims: no reading, and <see cref="ChargeState.Unknown"/>.
+///
+/// <see cref="ChargeState.Discharging"/> is the one charge state anything here sets. A slot
+/// answering ALKALINE, NIMH or UNKNOWN is running off a battery, since a USB-attached device
+/// would have come back WIRED as above: that is a reading of the answer rather than an
+/// inference from it. It has never been observed. Every occupied slot seen on the development
+/// machine — wired, and on the receiver — reported WIRED, so this arm, the bands it carries
+/// and the percentages behind them are all supported by XInput.h and by nothing that has
+/// actually been plugged in. That is a fact about the hardware to hand rather than about the
+/// approach, but it is worth knowing before trusting any of it.
 ///
 /// Identity is the awkward part. A slot is an index from 0 to 3 with no name, no VID/PID and
 /// no serial behind it, and a pad that reconnects can land in a different one. Two
@@ -41,10 +59,14 @@ namespace BattTray.Devices;
 /// re-fires whenever a pad reconnects, which is the failure that class exists to avoid.</item>
 /// </list>
 ///
-/// The transport is reported as <see cref="Transport.Dongle"/>. XInput does not say which
-/// radio it is talking over, and the Bluetooth case above is genuinely filed under the wrong
-/// one — but that pad is already in the menu under its real transport from the other
-/// provider, and every reading only reachable here arrives over a dongle.
+/// A pad with a reading is reported as <see cref="Transport.Dongle"/>. XInput does not say
+/// which radio it is talking over, and the Bluetooth case above is genuinely filed under the
+/// wrong one — but that pad is already in the menu under its real transport from the other
+/// provider, and every reading only reachable here arrives over a dongle. The wired row is
+/// the exception and needs no guessing: WIRED is the one attachment XInput names outright, so
+/// that row is <see cref="Transport.Usb"/>. The provider-level
+/// <see cref="IPeripheralProvider.Transport"/> stays Dongle, being the transport this
+/// provider is about rather than a claim over each row it produces.
 ///
 /// No cache, and no <see cref="IPeripheralProvider.InvalidateDeviceCache"/> override: there
 /// is nothing to enumerate and nothing to open, only four calls into a loaded DLL. Measured
@@ -96,17 +118,22 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
             if (XInput.Read(slot) is not { Result: XInput.ErrorSuccess } reading)
                 continue;
 
-            if (Interpret(reading.Type, reading.Level) is not { } band)
+            if (Interpret(reading.Type, reading.Level) is not { } verdict)
                 continue;
 
             results.Add(new Peripheral
             {
                 Id = SlotId(slot),
                 Name = SlotName(slot),
-                Transport = Transport.Dongle,
+                Transport = verdict.Transport,
                 Category = DeviceCategory.Gamepad,
-                BatteryPercent = band.Percent,
-                BatteryBand = band.Name,
+
+                // Both null on a USB-attached slot, which is a peripheral with no reading at
+                // all — the case every renderer already had to handle for a device that
+                // publishes no battery. See Peripheral.BatteryText.
+                BatteryPercent = verdict.Band?.Percent,
+                BatteryBand = verdict.Band?.Name,
+                ChargeState = verdict.Charge,
 
                 // Nothing here is ever stale, unlike Bluetooth: XInput keeps no memory of a
                 // pad that has gone, so a slot that answered at all answered about now. There
@@ -180,8 +207,9 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
         XInput.BatteryTypeDisconnected =>
             "BATTERY_TYPE_DISCONNECTED — no battery, so no peripheral",
         XInput.BatteryTypeWired =>
-            "BATTERY_TYPE_WIRED — a cable, so there is no battery to report and the level below "
-            + "means nothing; no peripheral",
+            "BATTERY_TYPE_WIRED — USB-attached, so there is no battery to report and the level "
+            + "below means nothing; listed with no reading. Not read as a cable: a 2.4 GHz "
+            + "receiver returns this too, measured with the cable out",
         XInput.BatteryTypeAlkaline => "BATTERY_TYPE_ALKALINE",
         XInput.BatteryTypeNimh => "BATTERY_TYPE_NIMH",
         XInput.BatteryTypeUnknown =>
@@ -202,20 +230,33 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
 
         string name = BandNames[level].ToUpperInvariant();
 
-        return Interpret(type, level) is { } band
+        return Interpret(type, level) is { Band: { } band }
             ? string.Create(CultureInfo.InvariantCulture,
                 $"BATTERY_LEVEL_{name} -> shown as \"{band.Name}\", standing in as {band.Percent}% for sorting and thresholds")
             : $"BATTERY_LEVEL_{name}, ignored: the battery type above rules the reading out";
     }
 
     /// <summary>
-    /// The band a type and level pair amount to, or null where they amount to no reading:
-    /// nothing in the slot, a cable, or a level outside the four XInput documents.
+    /// What a type and level pair amount to, or null where they amount to nothing worth
+    /// listing: nothing in the slot, or a level outside the four XInput documents.
     /// </summary>
-    static Band? Interpret(byte type, byte level) =>
-        type is XInput.BatteryTypeDisconnected or XInput.BatteryTypeWired || level >= BandPercent.Length
-            ? null
-            : new Band(BandPercent[level], BandNames[level]);
+    static Verdict? Interpret(byte type, byte level) => type switch
+    {
+        XInput.BatteryTypeDisconnected => null,
+
+        // The level byte is thrown away here and only here. It reads FULL because the field
+        // has to hold something, and there is no battery it is about. Unknown rather than
+        // Charging: this byte is returned for a receiver as readily as for a cable, so it
+        // cannot support a claim about charge. Usb because both of those are USB
+        // attachments, which is the part it does settle.
+        XInput.BatteryTypeWired => new Verdict(null, ChargeState.Unknown, Transport.Usb),
+
+        // A named battery type, or one XInput will not name: either way the pad is running
+        // off it, since anything on USB would have been reported as WIRED above.
+        _ => level < BandPercent.Length
+            ? new Verdict(new Band(BandPercent[level], BandNames[level]), ChargeState.Discharging, Transport.Dongle)
+            : null,
+    };
 
     /// <summary>
     /// Slot 0 is "Gamepad 1" because the pad itself counts from one: the player light on the
@@ -235,4 +276,11 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
 
     /// <summary>One of XInput's four levels: what it is called, and what it sorts as.</summary>
     readonly record struct Band(int Percent, string Name);
+
+    /// <summary>
+    /// Everything a slot's two bytes settle: the reading if there is one, how the pad is
+    /// powered, and how it is attached. A null <paramref name="Band"/> is a cable, which is
+    /// the one case here that produces a peripheral with nothing to report.
+    /// </summary>
+    readonly record struct Verdict(Band? Band, ChargeState Charge, Transport Transport);
 }

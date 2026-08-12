@@ -131,22 +131,39 @@ ago the reading was taken.
 **Charging state is not available over Bluetooth.** A full dump of every device property
 on a battery-reporting node showed no charging flag — Bluetooth Classic simply does not
 expose one. `ChargeState` is therefore tri-state (`Unknown` / `Discharging` / `Charging`)
-and Bluetooth always reports `Unknown`, because "not charging" would be a guess.
+and Bluetooth always reports `Unknown`, because "not charging" would be a guess. No other
+source fills it in either — XInput looked as though it would and does not, for reasons worth
+reading before trying again: [`WIRED` is not a cable](#wired-is-not-a-cable).
 
-A wired transport is the obvious thing to fill the field in, but on the hardware here that
-is weaker than it sounds. A cable being attached is a real charging signal — the catch is
-that the node which knows about the cable is not the node which knows the percentage.
-Windows files a device's BLE and USB faces as separate containers under different PIDs: this
-controller is container `3718a527-31ac-5f1f-ac4b-b763b32cf562` at PID `301B` over BLE and
+Correlating the two sources would be the way to put a charge state on a *Bluetooth* row,
+and on the hardware here that is weaker than it sounds. A cable being attached is a real
+charging signal — the catch is that the node which knows about the cable is not the node
+which knows the percentage. Windows files a device's BLE and USB faces as separate
+containers under different PIDs: this controller is container
+`3718a527-31ac-5f1f-ac4b-b763b32cf562` at PID `301B` over BLE and
 `fcb6d6dc-5fca-5a5b-846e-f04e82c61d38` at PID `310A` wired. Correlating the two is a
 vendor-id-and-name heuristic rather than a lookup — the VID matches, the container id does
 not, and the wired composite node calls itself only "USB Composite Device", with the product
 string on its HID interfaces ("8BitDo Ultimate 2C Wireless Controller") not an exact match
 for the BLE node's name ("8BitDo Ultimate 2C Wireless") either. The other route is a device
 that declares charge in a HID report, which none attached here does — see
-[`--probe-hid`](#probing-for-a-battery-in-hid-report-descriptors). XInput does not fill the
-gap either, and says so explicitly: a pad on a cable reports `BATTERY_TYPE_WIRED`, which
-means "no battery to ask about" rather than "charging".
+[`--probe-hid`](#probing-for-a-battery-in-hid-report-descriptors).
+
+Worse than a loose match: the heuristic's premise is unsound as stated. The pad's 2.4 GHz
+receiver enumerates under that same PID `310A`, so "a USB node with this VID is present" does
+not mean a cable is attached — it means the pad is reachable over USB by *some* route, which
+is the same wall [`WIRED` is not a cable](#wired-is-not-a-cable) runs into. The one thread
+left is the USB serial: the receiver is `USB\VID_2DC8&PID_310A\991252A6A7`, and if a cabled
+pad enumerates a different one, that distinguishes them — per device, by observation, not as
+a rule that generalises to hardware nobody has held.
+
+The model would have to move first, too. A merged row would want to read
+`87% (stale) · charging` — a live device carrying an old number — and `Peripheral.IsStale`
+is derived as `!IsConnected && BatteryPercent is not null`, so that state cannot be
+expressed. Present-over-USB with a reading from the last BLE session is exactly the case the
+derivation rules out, and both `DescribeDevice` and the low-battery check branch on
+`IsConnected` before anything else. Unpicking staleness from connectedness in the record is
+the first move, not the VID heuristic.
 
 ## How XInput controller detection works
 
@@ -154,13 +171,16 @@ means "no battery to ask about" rather than "charging".
 only non-Bluetooth battery source anything in this repo has found — both property sweeps
 and the HID descriptor sweep came back empty — and it is deliberately narrow:
 
-- **A pad on a cable is not listed at all.** `XInputGetBatteryInformation` returns
-  `BATTERY_TYPE_WIRED` with `BATTERY_LEVEL_FULL` beside it. The level byte has to hold
-  something and that something is not a reading, so taking it would put a confident 100% in
-  the tray for a device that never claimed one.
+- **A USB-attached pad is listed with no reading at all.** `XInputGetBatteryInformation`
+  returns `BATTERY_TYPE_WIRED` with `BATTERY_LEVEL_FULL` beside it. The level byte has to
+  hold something and that something is not a reading, so taking it would put a confident
+  100% in the tray for a device that never claimed one. The row reads
+  `Gamepad 1 (XInput) — no battery reported · connected`: the controller is there, and its
+  battery is not knowable from here. **`WIRED` does not mean a cable** — see below.
 - **A pad on a radio reports one of four levels** — `EMPTY` / `LOW` / `MEDIUM` / `FULL` —
-  and that is the whole scale. This covers the 2.4 GHz dongle case; it is also why the row
-  reads `Gamepad 1 (XInput) — low · connected` rather than showing a percentage.
+  and that is the whole scale, which is why such a row would read
+  `Gamepad 1 (XInput) — low · connected` rather than showing a percentage. No hardware here
+  has produced one; see below.
 
 `Windows.Gaming.Input`'s `TryGetBatteryReport()` looks like the better source and is not.
 Measured on the 8BitDo Ultimate 2C it returned `RemainingCapacityInMilliwattHours = 1000`
@@ -182,6 +202,36 @@ through `low` and re-arms at `medium`.)
 The 10-step scale some Bluetooth headsets report is not marked this way. It is coarse too,
 but the device spells its buckets as percentages, so showing the number repeats what was
 said instead of inventing two digits.
+
+### `WIRED` is not a cable
+
+`BATTERY_TYPE_WIRED` reads like a positive signal that a cable is attached, and spending it
+on `ChargeState.Charging` is the obvious way to make that field mean something. It does not
+survive contact with the hardware.
+
+On the 8BitDo Ultimate 2C with the **cable physically out**, connected through its own 2.4
+GHz receiver, slot 0 still answers `BATTERY_TYPE_WIRED` — with the same `VID_2DC8`, the same
+`PID_310A` and the same `&IG_00` interface the cable produced, because the receiver is itself
+a bus-powered USB device. Nothing in XInput's answer separates a pad on a cable from a pad on
+a dongle. A row saying either would be wrong half the time, so the byte is read as the only
+thing it supports — *XInput has no battery for this device* — and the peripheral carries no
+reading and `ChargeState.Unknown`.
+
+Two consequences follow, and both are about this hardware rather than about the approach.
+
+**Nothing sets `Charging`.** Bluetooth cannot (no charging flag exists on the property), HID
+cannot ([no descriptor here declares one](#probing-for-a-battery-in-hid-report-descriptors)),
+and XInput's one candidate byte turned out to mean something else. The rendering in
+`DescribeDevice` and the latch release in `LowBatteryNotifier` are both kept, and both are
+unreached — they are the shape a charge source would plug into, not behaviour the app has
+performed. The latch release carries a note about ordering: a source reporting charge without
+a percentage needs its test moved above the percentage guard.
+
+**The banded path has never run either.** Every occupied slot observed on the development
+machine, wired and on the receiver, reported `WIRED`. `ChargeState.Discharging`, the four
+band names and the 5/20/60/100 stand-ins are supported by `XInput.h` and by nothing that has
+been plugged in — a pad whose XInput answer names a battery type would exercise them, and
+none here does.
 
 ### What it costs
 
@@ -209,8 +259,10 @@ the alternative is an alert that re-fires on every reconnect.
 Bluetooth provider and once as a slot here, because such a pad reaches XInput *and*
 publishes a battery to the PnP tree. Nothing XInput exposes could correlate the two, so the
 duplicate is left legible rather than guessed away: one row carries a real name, the other
-is plainly a slot. For the same reason the transport is reported as `Dongle` — XInput never
-says which radio it is talking over, but every reading only reachable here arrives over one.
+is plainly a slot. For the same reason a row with a reading is reported as `Dongle` — XInput
+never says which radio it is talking over, but every reading only reachable here arrives over
+one. The wired row is the exception and needs no guess: it is `Usb`, `WIRED` being the one
+attachment XInput names outright.
 
 ## Diagnostics
 

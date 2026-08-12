@@ -48,13 +48,20 @@ internal sealed class LowBatteryNotifier(Action<string, string> showAlert)
 
         foreach (var device in peripherals)
         {
-            // A cached percentage from a disconnected device says nothing about now.
+            // A cached percentage from a disconnected device says nothing about now, and a
+            // connected device publishing no level has nothing to threshold.
             if (!device.IsConnected || device.BatteryPercent is not { } percent)
                 continue;
 
+            // Never taken: no provider sets Charging, XInput's WIRED having turned out to
+            // mean "USB-attached, no battery information" rather than "on a cable". Kept
+            // because the rule is the right one for a source that can say it — a charge
+            // signal ends the discharge the warning was about. Whichever source that turns
+            // out to be, check where this sits: a source that reports charge without a
+            // percentage needs the test moved above the guard, or the latch it should
+            // release will be skipped a line earlier for having no number.
             if (device.ChargeState == ChargeState.Charging)
             {
-                // Plugged in and climbing: the warning has served its purpose.
                 _latched.Remove(device.Id);
                 continue;
             }

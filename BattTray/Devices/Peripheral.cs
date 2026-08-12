@@ -25,6 +25,15 @@ internal enum DeviceCategory
 /// without saying whether the device is charging, and "not charging" is a different
 /// claim from "we don't know".
 /// </summary>
+/// <remarks>
+/// <see cref="Charging"/> is set by nothing. Bluetooth cannot: a full property dump of a
+/// battery-reporting node showed no charging flag anywhere, and "not charging" would be a
+/// guess. XInput looked as though it could, through BATTERY_TYPE_WIRED — but that byte comes
+/// back for a 2.4 GHz receiver as readily as for a cable, measured with the cable out, so it
+/// carries no charge claim either. <see cref="Discharging"/> is the only value a provider
+/// sets, and only on a slot that names a battery type, which no hardware to hand has done.
+/// See XInputGamepadProvider for both measurements.
+/// </remarks>
 internal enum ChargeState
 {
     Unknown,
