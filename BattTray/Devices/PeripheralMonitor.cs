@@ -13,6 +13,15 @@ internal sealed class PeripheralMonitor(params IPeripheralProvider[] providers)
 
     public IReadOnlyList<Peripheral> Peripherals { get; private set; } = [];
 
+    /// <summary>
+    /// Whether something is calling <see cref="InvalidateDeviceCache"/> as devices come and
+    /// go. False is the safe default and the answer that has to hold when registering for
+    /// device-change notifications failed: every poll then drops the caches itself, which is
+    /// exactly what the providers did before any of this existed. A registration that does
+    /// not take therefore costs speed rather than correctness.
+    /// </summary>
+    public bool DeviceChangesAreWatched { get; set; }
+
     /// <summary>Lowest battery level among connected devices, for the tray icon.</summary>
     public int? LowestConnectedBattery => Peripherals
         .Where(p => p.IsConnected && p.BatteryPercent is not null)
@@ -21,6 +30,8 @@ internal sealed class PeripheralMonitor(params IPeripheralProvider[] providers)
     /// <summary>Raw evidence from every provider, for the diagnostics tool.</summary>
     public IReadOnlyList<DiagnosticNode> GetDiagnostics()
     {
+        DropCachesUnlessWatched();
+
         var collected = new List<DiagnosticNode>();
 
         foreach (var provider in _providers)
@@ -38,8 +49,42 @@ internal sealed class PeripheralMonitor(params IPeripheralProvider[] providers)
         return collected;
     }
 
+    /// <summary>
+    /// Tells every provider that the set of attached devices has changed, so whatever it
+    /// enumerated last time has to be read again. Battery levels are not a device change and
+    /// never arrive this way; this is about which devices exist, not what they report.
+    /// </summary>
+    public void InvalidateDeviceCache()
+    {
+        foreach (var provider in _providers)
+        {
+            try
+            {
+                provider.InvalidateDeviceCache();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"{provider.GetType().Name} cache invalidation failed: {ex}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// A provider may only hold an enumeration across calls if something is going to tell it
+    /// when that enumeration stopped being true. When nothing will, every way into a provider
+    /// starts by saying so — including the dump, which would otherwise be able to describe a
+    /// device list a scan had already thrown away.
+    /// </summary>
+    void DropCachesUnlessWatched()
+    {
+        if (!DeviceChangesAreWatched)
+            InvalidateDeviceCache();
+    }
+
     public void Refresh()
     {
+        DropCachesUnlessWatched();
+
         var collected = new List<Peripheral>();
 
         foreach (var provider in _providers)

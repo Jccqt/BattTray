@@ -54,7 +54,38 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     const uint BdifConnected = 0x00000020;
     const uint BdifLeConnected = 0x01000000;
 
+    /// <summary>
+    /// The device ids under each swept enumerator, held between polls. Null until the first
+    /// sweep and after every invalidation.
+    /// </summary>
+    /// <remarks>
+    /// Enumerating is not expensive on its own, but one refresh walks the Bluetooth subtree
+    /// three times over — once for phone services, once for battery readings, and once more
+    /// when the diagnostics dump asks — and the list it walks changes only when a node
+    /// arrives or goes away. Which is precisely when this is thrown out. Nothing here needs
+    /// locking: invalidation is marshalled onto the same thread the provider is polled from.
+    /// </remarks>
+    Dictionary<string, string[]>? _deviceIds;
+
     public Transport Transport => Transport.Bluetooth;
+
+    public void InvalidateDeviceCache() => _deviceIds = null;
+
+    /// <summary>
+    /// Device instance ids beneath one enumerator, from <see cref="_deviceIds"/> when it is
+    /// warm. A stale id is survivable and already handled — every caller locates the node and
+    /// steps over one that has gone — but a missing id is not, which is why the cache is only
+    /// allowed to live as long as nothing has arrived.
+    /// </summary>
+    string[] DeviceIds(string enumerator)
+    {
+        _deviceIds ??= [];
+
+        if (!_deviceIds.TryGetValue(enumerator, out string[]? ids))
+            _deviceIds[enumerator] = ids = ConfigManager.GetDeviceIds(enumerator);
+
+        return ids;
+    }
 
     public IReadOnlyList<Peripheral> GetPeripherals()
     {
@@ -159,7 +190,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
         foreach (var enumerator in Enumerators)
         {
-            foreach (var deviceId in ConfigManager.GetDeviceIds(enumerator))
+            foreach (var deviceId in DeviceIds(enumerator))
             {
                 uint devInst = ConfigManager.LocateDevNode(deviceId);
 
@@ -262,13 +293,13 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     /// reporting a live link is enough — so the dump cannot contradict the menu it exists to
     /// explain.
     /// </summary>
-    static Dictionary<ulong, LinkEvidence> ReadLinkEvidence()
+    Dictionary<ulong, LinkEvidence> ReadLinkEvidence()
     {
         var links = new Dictionary<ulong, LinkEvidence>();
 
         foreach (var enumerator in Enumerators)
         {
-            foreach (var deviceId in ConfigManager.GetDeviceIds(enumerator))
+            foreach (var deviceId in DeviceIds(enumerator))
             {
                 uint devInst = ConfigManager.LocateDevNode(deviceId);
                 if (devInst == 0 || ResolveAddress(devInst, deviceId) is not { } address)
@@ -395,14 +426,14 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
         ConfigManager.GetRaw(devInst, propertyKey) is { } property ? FormatRaw(property) : Absent;
 
     /// <summary>Newest battery reading per radio address, across all Bluetooth device nodes.</summary>
-    static Dictionary<ulong, BatteryReading> ReadBatteryReadings()
+    Dictionary<ulong, BatteryReading> ReadBatteryReadings()
     {
         var readings = new Dictionary<ulong, BatteryReading>();
         var links = new Dictionary<ulong, bool>();
 
         foreach (var enumerator in Enumerators)
         {
-            foreach (var deviceId in ConfigManager.GetDeviceIds(enumerator))
+            foreach (var deviceId in DeviceIds(enumerator))
             {
                 uint devInst = ConfigManager.LocateDevNode(deviceId);
                 if (devInst == 0)
@@ -512,13 +543,13 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     /// All the Bluetooth enumerators are swept, because a phone's Classic profiles and its GATT
     /// services live in separate subtrees and a given phone may only appear in one of them.
     /// </summary>
-    static HashSet<ulong> ReadPhoneAddresses()
+    HashSet<ulong> ReadPhoneAddresses()
     {
         var addresses = new HashSet<ulong>();
 
         foreach (var enumerator in Enumerators)
         {
-            foreach (var deviceId in ConfigManager.GetDeviceIds(enumerator))
+            foreach (var deviceId in DeviceIds(enumerator))
             {
                 if (!PhoneServiceClasses.Any(prefix => deviceId.Contains(prefix, StringComparison.OrdinalIgnoreCase)))
                     continue;

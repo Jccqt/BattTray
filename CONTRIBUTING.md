@@ -33,6 +33,14 @@ sorting, tray icon, menu, notifications and diagnostics are already transport-ag
 a provider is the only new code. `GetDiagnostics()` has an empty default, so a provider can
 be prototyped before it reports anything to the harness.
 
+`InvalidateDeviceCache()` has an empty default too, and most providers should leave it
+that way. Implement it only if enumerating is genuinely expensive — a HID provider has to
+open handles and parse report descriptors, which is fifty times the cost of listing the
+interfaces — in which case hold the result and drop it here. Whatever you hold has to be
+dropped here and nowhere else: the monitor calls this on every poll when device-change
+notifications could not be registered, so a cache that answers to anything other than this
+method goes stale in exactly the case that fallback exists for.
+
 ## Style
 
 Match the surrounding code. Comments here explain *why* a non-obvious choice was made

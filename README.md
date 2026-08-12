@@ -53,7 +53,7 @@ footprint is unchanged (~10 MB).
 | Warn me when a device runs low | Balloon tip naming the device. Off does not mean "catch up later" — see below. |
 | Alert at or below | 10 / 20 / 30% only. |
 | Hide disconnected devices | Display only; a hidden device can still raise a low-battery alert. |
-| Refresh every | 15 s – 5 min. A scan costs ~2 ms, so this is about connect/disconnect lag, not cost. |
+| Refresh every | 15 s – 5 min. How often battery *levels* are re-read; a scan costs ~10 ms, so this is not about cost. Devices appearing and disappearing no longer wait for it — see below. |
 
 Everything except the startup entry is stored in `%APPDATA%\BattTray\settings.json`.
 Autostart deliberately has no copy there: the registry is the single source of truth, so
@@ -218,7 +218,10 @@ the answer is one command away.
 The sweep costs ~105 ms, nearly all of it in opening handles and parsing descriptors rather
 than in enumeration (~2 ms). That is fine on demand and far outside the single-digit
 milliseconds `IPeripheralProvider` is polled against, which is why this lives in the
-diagnostics tool and why a HID provider will need a cheaper shape than a full sweep.
+diagnostics tool and why a HID provider will need a cheaper shape than a full sweep. That
+shape is a cache invalidated by device-change events rather than rebuilt per poll — see
+[Design notes](#device-change-notifications-and-the-poll-behind-them), where the seam for
+it already exists.
 
 ## Design notes
 
@@ -230,9 +233,63 @@ Adding a transport means implementing `IPeripheralProvider` and registering it i
 `TrayApplicationContext`; the model, sorting, tray icon, menu, notifications and
 diagnostics are already transport-agnostic.
 
-Refresh is a plain timer rather than `WM_DEVICECHANGE` registration. At ~2 ms per scan the
-poll is not a cost problem, so the interval was exposed as a setting instead; event-driven
-refresh remains the way to make connect/disconnect instant without polling faster.
+### Device-change notifications, and the poll behind them
+
+Refresh is driven by two things: `CM_Register_Notification` for arrival and removal, and
+the timer for everything else. The split follows what each one can actually observe —
+**a battery level changing is not a device change and never arrives as an event**, so the
+poll is what moves a percentage and the interval setting still means what it says.
+
+The events were added for the transport that does not exist yet. Enumerating HID
+interfaces costs ~2 ms, but opening all 15 handles and parsing their capabilities costs
+~105 ms (measured by `--probe-hid`, above), and `IPeripheralProvider` is polled from the
+UI thread against a single-digit-millisecond budget — so a HID provider cannot re-read
+everything per poll, and the only safe way to hold the result between polls is to know
+when it went out of date. `InvalidateDeviceCache()` on the provider interface is that
+signal.
+
+Two honest caveats about what that bought the transport already shipped. The **cache** is
+close to pointless here: a full refresh measures ~10 ms in a Release build on the
+development machine, of which re-listing the device ids is only ~1 ms — the rest is the
+pairing-record call and the property reads, neither of which a device-change event can
+authorise caching. (The ~2 ms quoted above and below is the `cfgmgr32` sweep alone, not a
+whole scan.) The Bluetooth provider caches because the seam should have a user that
+exercises it, not because 1 ms mattered. The **events** are the part that earns its keep,
+and even then not in the menu — the menu was never the stale part, since it rescans as it
+opens. It is the hover tooltip and the low-battery check that were stale, and both now
+follow a device appearing or disappearing within ~0.4 s instead of waiting out the poll.
+
+`CM_Register_Notification` was chosen over `WM_DEVICECHANGE` because the window message
+needs a window to be delivered to, and this app has none — see "Why the tray icon is
+fixed"; a hidden window created purely to receive broadcasts would be the only window it
+owns.
+
+Four things about the shape it took are non-obvious:
+
+- **Both filters are registered as broadly as they go** — every interface class, every
+  device instance — which is the opposite of what the per-class filter exists for. The
+  events authorise a cache, and a filter narrow enough to miss one arrival leaves that
+  cache wrong until the device goes away again. Breadth costs nothing to sit on: an idle
+  machine has no device changes to report, whatever the filter says, and a burst from a
+  busy one collapses into a single scan below.
+- **A burst is coalesced over 400 ms.** One headset connecting starts several profile
+  nodes and publishes several interfaces, each reported separately. The timer is started,
+  never restarted: a device that kept reporting itself for longer than the interval would
+  otherwise push a restarting timer back indefinitely.
+- **Callbacks arrive on threadpool threads** and everything downstream is UI-thread bound,
+  so they are posted through the synchronization context, and `Refresh` holds a re-entrancy
+  guard — an open menu and the settings dialog pump messages of their own, so a tick can
+  land part-way through a scan.
+- **A failed registration is not an error.** `DeviceChangeWatcher.TryStart` returns null,
+  `PeripheralMonitor.DeviceChangesAreWatched` stays false, and every poll then invalidates
+  the caches itself — which is exactly what the providers did before any of this existed.
+  The registration is also all-or-nothing, since half of it would claim a coverage it does
+  not have. The same default is why the diagnostics harness, which never registers
+  anything, still re-enumerates on every scan.
+
+What arrives promptly is *presence*, not percentage. A device's battery property often
+appears seconds after its nodes start, so the value behind a freshly connected device is
+still the poll's to fill in; no settle interval could fix that.
 
 ## Building from source
 

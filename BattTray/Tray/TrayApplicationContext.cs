@@ -15,11 +15,27 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// <summary>Shell tooltips are truncated past this length.</summary>
     const int MaxTooltipLength = 63;
 
+    /// <summary>
+    /// How long a burst of device-change notifications is left to settle before rescanning.
+    /// One headset connecting starts several profile nodes and publishes several interfaces,
+    /// and every one of them is reported separately; without this, one device arriving would
+    /// buy a dozen scans. Short enough that the delay is not the part anyone notices — a
+    /// device's battery property often takes seconds longer than this to appear, which is the
+    /// poll's job rather than something a longer wait here could fix.
+    /// </summary>
+    const int DeviceChangeSettleMilliseconds = 400;
+
     readonly PeripheralMonitor _monitor = new(new BluetoothPeripheralProvider());
     readonly NotifyIcon _notifyIcon;
     readonly LowBatteryNotifier _notifier;
     readonly ContextMenuStrip _menu;
     readonly System.Windows.Forms.Timer _timer;
+
+    /// <summary>Collects a burst of device changes into one scan; see the settle interval.</summary>
+    readonly System.Windows.Forms.Timer _deviceChangeSettle;
+
+    /// <summary>Reports arrivals and removals, or null when Windows would not register them.</summary>
+    readonly DeviceChangeWatcher? _deviceChanges;
 
     /// <summary>Supplies the dismissal the menu cannot hear about itself; see OnTrayMouseUp.</summary>
     readonly OutsideInteractionHook _outsideInteraction;
@@ -33,6 +49,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     /// <summary>The pending one-shot idle handler, held so it can be detached; see ShowSettingsWhenIdle.</summary>
     EventHandler? _startupIdle;
+
+    /// <summary>Guards <see cref="Refresh"/> against being entered twice; see the remarks there.</summary>
+    bool _refreshing;
 
     /// <param name="showSettings">
     /// Opens the settings dialog once the app is up, as the acknowledgement a launch the
@@ -77,6 +96,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // a taskbar that just inverted, so listen for the change instead. General is the
         // category the shell's ImmersiveColorSet broadcast arrives under.
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+
+        _deviceChangeSettle = new System.Windows.Forms.Timer { Interval = DeviceChangeSettleMilliseconds };
+        _deviceChangeSettle.Tick += OnDeviceChangeSettled;
+
+        // After the menu, which is what installs the synchronization context the watcher
+        // marshals its threadpool callbacks through, and after the timer those callbacks
+        // start — which is all they touch, so one arriving from here on is harmless even
+        // though this object is not finished. Before the first scan, and deliberately: a
+        // device arriving in the gap between scanning and registering would be missed by
+        // both, and the cache that scan fills would stay wrong until the device left.
+        //
+        // A refusal is not worth reporting to anyone — it leaves the app exactly as it was
+        // before any of this existed, polling — but it does have to be passed on, since it
+        // is what decides whether a provider may hold an enumeration between polls.
+        _deviceChanges = DeviceChangeWatcher.TryStart(OnDeviceChanged);
+        _monitor.DeviceChangesAreWatched = _deviceChanges is not null;
 
         Refresh();
 
@@ -192,16 +227,65 @@ internal sealed class TrayApplicationContext : ApplicationContext
             ApplyThemeIcon();
     }
 
+    /// <summary>
+    /// A device has arrived or gone away. Already marshalled onto this thread by the watcher,
+    /// so nothing here is off-thread.
+    /// </summary>
+    void OnDeviceChanged()
+    {
+        // The rest of this burst needs no timer of its own. Deliberately not a restart: an
+        // arrival that kept reporting itself for longer than the settle interval would push
+        // a restarting timer back indefinitely and the scan would never happen.
+        if (_deviceChangeSettle.Enabled)
+            return;
+
+        _deviceChangeSettle.Start();
+    }
+
+    void OnDeviceChangeSettled(object? sender, EventArgs e)
+    {
+        // A Forms timer repeats, and there is nothing left to wait for.
+        _deviceChangeSettle.Stop();
+
+        // What the providers enumerated last time is no longer what is attached, which is
+        // the one thing a poll cannot work out for itself.
+        _monitor.InvalidateDeviceCache();
+        Refresh();
+
+        // The menu is not rebuilt here. A closed one is rebuilt as it opens, from a scan
+        // newer than this one, and an open one is left alone on purpose: RebuildMenu
+        // disposes every row it replaces, including the one under the user's cursor.
+    }
+
     /// <summary>Rescans devices, updates the tooltip and alerts on low batteries.</summary>
+    /// <remarks>
+    /// Reached from the poll, the settle timer, the menu opening, and the user asking. All
+    /// four are on this thread, but an open menu and the settings dialog pump messages of
+    /// their own, so a timer tick can land part-way through a scan already in progress.
+    /// The second one is dropped rather than queued: it would only read the same tree again,
+    /// and whichever timer woke it will come round again shortly.
+    /// </remarks>
     void Refresh()
     {
-        _monitor.Refresh();
-        ApplyThemeIcon();
-        _notifyIcon.Text = BuildTooltip();
+        if (_refreshing)
+            return;
 
-        // Given the full list, not the filtered one: hiding disconnected devices is a
-        // display preference and must not silence a device that is genuinely low.
-        _notifier.Evaluate(_monitor.Peripherals, _settings);
+        _refreshing = true;
+
+        try
+        {
+            _monitor.Refresh();
+            ApplyThemeIcon();
+            _notifyIcon.Text = BuildTooltip();
+
+            // Given the full list, not the filtered one: hiding disconnected devices is a
+            // display preference and must not silence a device that is genuinely low.
+            _notifier.Evaluate(_monitor.Peripherals, _settings);
+        }
+        finally
+        {
+            _refreshing = false;
+        }
     }
 
     void ApplyPollInterval() =>
@@ -390,6 +474,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             // Global hooks: they outlive the object unless taken down explicitly.
             _outsideInteraction.Dispose();
+
+            // Before the timer it feeds, and before anything it could reach: unregistering
+            // waits out a callback that is already running, so once this returns nothing
+            // further will be posted here. A post made just before it lands on a message
+            // loop that has already ended, and is never dispatched.
+            _deviceChanges?.Dispose();
+            _deviceChangeSettle.Stop();
+            _deviceChangeSettle.Dispose();
+
             _timer.Stop();
             _timer.Dispose();
             _notifyIcon.Visible = false;
