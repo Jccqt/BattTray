@@ -20,7 +20,7 @@
     <Company>Jc Calayag</Company>
     <Copyright>Copyright (c) 2026 Jc Calayag</Copyright>
     <AssemblyTitle>BattTray</AssemblyTitle>
-    <Description>Windows tray app showing the battery level of Bluetooth peripherals.</Description>
+    <Description>Windows tray app showing the battery level of your PC peripherals.</Description>
   </PropertyGroup>
 
   <ItemGroup>

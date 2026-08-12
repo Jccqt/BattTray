@@ -11,7 +11,7 @@ Bluetooth, wired USB, or a 2.4 GHz dongle.
 |---|---|
 | Bluetooth | Implemented |
 | Wired USB | Not started |
-| 2.4 GHz dongle | Not started |
+| 2.4 GHz dongle | Partial — XInput controllers only, in four bands |
 
 Charging state is modelled but not yet reported by any source — see below.
 
@@ -63,6 +63,11 @@ The thresholds are restricted to multiples of 10 because some devices report bat
 coarse 10-step buckets rather than true percentages (the diagnostics tool below will tell
 you which yours does). A 25% threshold would really mean "the 3rd bucket" and would
 misrepresent its own precision.
+
+An XInput controller is coarser still — four bands, no percentage — and the menu shows it
+as `low` rather than as a number. The threshold you pick still decides when it warns: at
+10% only `empty` alerts, at 20% or 30% both `empty` and `low` do. See
+[XInput controllers](#how-xinput-controller-detection-works).
 
 ### Low-battery alerts
 
@@ -139,7 +144,73 @@ not, and the wired composite node calls itself only "USB Composite Device", with
 string on its HID interfaces ("8BitDo Ultimate 2C Wireless Controller") not an exact match
 for the BLE node's name ("8BitDo Ultimate 2C Wireless") either. The other route is a device
 that declares charge in a HID report, which none attached here does — see
-[`--probe-hid`](#probing-for-a-battery-in-hid-report-descriptors).
+[`--probe-hid`](#probing-for-a-battery-in-hid-report-descriptors). XInput does not fill the
+gap either, and says so explicitly: a pad on a cable reports `BATTERY_TYPE_WIRED`, which
+means "no battery to ask about" rather than "charging".
+
+## How XInput controller detection works
+
+`XInputGamepadProvider` asks `xinput1_4.dll` about its four controller slots. It is the
+only non-Bluetooth battery source anything in this repo has found — both property sweeps
+and the HID descriptor sweep came back empty — and it is deliberately narrow:
+
+- **A pad on a cable is not listed at all.** `XInputGetBatteryInformation` returns
+  `BATTERY_TYPE_WIRED` with `BATTERY_LEVEL_FULL` beside it. The level byte has to hold
+  something and that something is not a reading, so taking it would put a confident 100% in
+  the tray for a device that never claimed one.
+- **A pad on a radio reports one of four levels** — `EMPTY` / `LOW` / `MEDIUM` / `FULL` —
+  and that is the whole scale. This covers the 2.4 GHz dongle case; it is also why the row
+  reads `Gamepad 1 (XInput) — low · connected` rather than showing a percentage.
+
+`Windows.Gaming.Input`'s `TryGetBatteryReport()` looks like the better source and is not.
+Measured on the 8BitDo Ultimate 2C it returned `RemainingCapacityInMilliwattHours = 1000`
+of `FullChargeCapacityInMilliwattHours = 1000` with `Status = Discharging`, while the pad
+was plugged in and charging. Those milliwatt-hours are the same four-step byte scaled up,
+so a WinRT dependency would buy a number that is no more accurate, reads as though it were,
+and is wrong about the charge direction too.
+
+### Bands, and why the model grew a field
+
+`Peripheral.BatteryBand` is a provider saying "the percentage beside this is a stand-in".
+Sorting and the low-battery threshold are numeric and always will be, so a four-level
+source still has to supply a number — but nothing the user reads shows it. The levels map
+to 5 / 20 / 60 / 100, spaced so each permitted threshold cuts *between* bands rather than
+through one, and widely enough that climbing a band clears the notifier's 15-point re-arm
+margin. (One exception: a pad that alerted at `empty` against a 10% threshold stays latched
+through `low` and re-arms at `medium`.)
+
+The 10-step scale some Bluetooth headsets report is not marked this way. It is coarse too,
+but the device spells its buckets as percentages, so showing the number repeats what was
+said instead of inventing two digits.
+
+### What it costs
+
+A whole four-slot sweep measures ~0.45 ms, so this provider needs no cache and no
+device-change handling of its own. The distribution is the surprise: an occupied slot answers
+in ~0.005 ms and an **empty** one takes ~0.155 ms, thirty times longer, which makes three
+empty slots about 97% of the cost — the poll gets cheaper as controllers are connected. That
+is the old "never poll disconnected controllers" problem, still measurable and no longer
+expensive.
+
+The first call costs ~13 ms, which is loading `xinput1_4.dll`. It falls in the first refresh
+during construction, before the message loop starts, so it is startup cost rather than a
+stutter in the tray.
+
+### Two limits worth knowing
+
+**A slot is not an identity.** XInput exposes an index from 0 to 3 with no name, no VID/PID
+and no serial, and a pad that reconnects can land in a different slot. So the rows are named
+for the slot and say so — the number matches the player light on the controller — and the
+low-battery latch belongs to the slot rather than to the pad. Swap a low controller for
+another low controller in the same slot and the second inherits the first one's warning;
+the alternative is an alert that re-fires on every reconnect.
+
+**An Xbox pad on Bluetooth can appear twice**, once under its product name from the
+Bluetooth provider and once as a slot here, because such a pad reaches XInput *and*
+publishes a battery to the PnP tree. Nothing XInput exposes could correlate the two, so the
+duplicate is left legible rather than guessed away: one row carries a real name, the other
+is plainly a slot. For the same reason the transport is reported as `Dongle` — XInput never
+says which radio it is talking over, but every reading only reachable here arrives over one.
 
 ## Diagnostics
 
@@ -159,7 +230,9 @@ only the raw form separates those.
 Without `--once` it keeps watching, logging every change with a wall-clock time, and on
 `Ctrl+C` reports per device whether the values seen look like true 0-100 granularity or
 the coarse 10-step scale — which is what decides whether a number should be read as a
-value or as a band.
+value or as a band. Where a provider already knows its source is coarse it says so per
+reading, and that answer is reported rather than inferred: XInput's four levels stand in as
+5/20/60/100, which the multiples-of-10 test would otherwise misread as full granularity.
 
 ```bash
 dotnet run --project tools/BattTray.Diagnostics -- --interval 30 --log drain.txt
@@ -321,8 +394,8 @@ still the poll's to fill in; no settle interval could fix that.
 ## Building from source
 
 Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and Windows.
-There are no package dependencies — the Bluetooth work is direct P/Invoke into
-`bluetoothapis.dll` and `cfgmgr32.dll`.
+There are no package dependencies — it is direct P/Invoke into `bluetoothapis.dll`,
+`cfgmgr32.dll` and `xinput1_4.dll`, all of which ship with Windows.
 
 ```bash
 dotnet run --project BattTray
@@ -350,8 +423,8 @@ switched on. Turning `Start with Windows` off before deleting removes the second
 Pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Readings from hardware
 I do not own are the most useful thing to send: run the diagnostics harness and paste its
 output, since the raw bytes are what separate a decoding bug here from a device reporting
-something strange. Wired USB and 2.4 GHz support are unimplemented and are the clearest
-place to start on code.
+something strange. Wired USB is unimplemented, and 2.4 GHz reaches only XInput controllers,
+so both are the clearest place to start on code.
 
 ## License
 

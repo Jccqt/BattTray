@@ -29,6 +29,11 @@ internal sealed class LowBatteryNotifier(Action<string, string> showAlert)
     /// the re-arm point does not wander with each discharge. Wide enough to sit outside the
     /// coarse buckets that some devices report in, which would otherwise let a single
     /// bucket flip re-arm the alert.
+    ///
+    /// A device reporting a band rather than a percentage is compared on the stand-in number
+    /// its provider supplies, which is what makes this margin that provider's problem: the
+    /// numbers have to be spaced so that climbing a band clears it. See the mapping in
+    /// XInputGamepadProvider, where four levels have to survive this rule.
     /// </remarks>
     const int ReArmMargin = 15;
 
@@ -80,7 +85,13 @@ internal sealed class LowBatteryNotifier(Action<string, string> showAlert)
         string title = devices.Count == 1 ? "Battery low" : "Batteries low";
         string body = string.Join(
             Environment.NewLine,
-            devices.Select(d => $"{d.Name} is at {d.BatteryPercent}%."));
+            // A band reads as a state and a percentage as a quantity, so they take different
+            // verbs: "is low" against "is at 15%". The alternative — one sentence covering
+            // both — produces "is at low", which is the sort of phrasing that makes a reader
+            // wonder whether the number went missing.
+            devices.Select(d => d.BatteryBand is { } band
+                ? $"{d.Name} is {band}."
+                : $"{d.Name} is at {d.BatteryPercent}%."));
 
         _showAlert(title, body);
     }

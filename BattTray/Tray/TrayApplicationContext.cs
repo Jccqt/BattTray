@@ -25,7 +25,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// </summary>
     const int DeviceChangeSettleMilliseconds = 400;
 
-    readonly PeripheralMonitor _monitor = new(new BluetoothPeripheralProvider());
+    readonly PeripheralMonitor _monitor = new(
+        new BluetoothPeripheralProvider(),
+        new XInputGamepadProvider());
     readonly NotifyIcon _notifyIcon;
     readonly LowBatteryNotifier _notifier;
     readonly ContextMenuStrip _menu;
@@ -315,11 +317,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return "BattTray — no devices";
 
         var connected = devices.Where(d => d.IsConnected && d.BatteryPercent is not null).ToList();
+        var lowest = _monitor.LowestConnected;
+
         string text = connected.Count switch
         {
             0 => $"BattTray — {devices.Count} device(s), none reporting",
-            1 => $"{connected[0].Name}: {connected[0].BatteryPercent}%",
-            _ => $"{connected.Count} devices — lowest {_monitor.LowestConnectedBattery}%",
+            1 => $"{connected[0].Name}: {connected[0].BatteryText}",
+
+            // The lowest device is named here, where it used to contribute a bare number.
+            // A band forces the issue — "lowest low" is not a sentence — but the naming is
+            // owed either way: an unattributed reading is the same ambiguity that keeps a
+            // level off the tray icon. Over-long lines are truncated below as they always were.
+            _ => $"{connected.Count} devices — lowest {lowest?.Name}: {lowest?.BatteryText}",
         };
 
         return text.Length <= MaxTooltipLength ? text : text[..(MaxTooltipLength - 1)] + "…";
@@ -344,7 +353,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // devices that are paired but offline".
             string message = _settings.HideDisconnected && _monitor.Peripherals.Count > 0
                 ? "No connected devices"
-                : "No Bluetooth devices found";
+                : "No devices found";
 
             _menu.Items.Add(new ToolStripMenuItem(message) { Enabled = false });
         }
@@ -421,7 +430,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     static string DescribeDevice(Peripheral device)
     {
-        string battery = device.BatteryPercent is { } percent ? $"{percent}%" : "battery unknown";
+        string battery = device.BatteryText ?? "battery unknown";
 
         string status = device switch
         {

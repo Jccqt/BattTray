@@ -11,7 +11,8 @@ using BattTray.Diagnostics;
 //     real discharge and compare each logged value against the vendor app.
 //  3. On exit, reports per device whether the values observed look like true 0-100
 //     granularity or the coarse 10-step scale HFP headsets use — which decides whether a
-//     percentage should be read as a number or as a band.
+//     percentage should be read as a number or as a band. A provider that already knows its
+//     source is coarse says so per reading, and that answer is reported rather than inferred.
 //
 // It drives the real providers through the real IPeripheralProvider seam, so every
 // transport added later is covered the moment its provider implements GetDiagnostics.
@@ -37,7 +38,7 @@ if (args.Contains("--help") || args.Contains("-h"))
 int intervalSeconds = ReadInterval(args) ?? 5;
 var log = OpenLog(args);
 
-var monitor = new PeripheralMonitor(new BluetoothPeripheralProvider());
+var monitor = new PeripheralMonitor(new BluetoothPeripheralProvider(), new XInputGamepadProvider());
 var observations = new Dictionary<string, DeviceLog>(StringComparer.Ordinal);
 
 Write($"BattTray diagnostics — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
@@ -108,7 +109,9 @@ void Scan()
     foreach (var device in monitor.Peripherals)
     {
         string state = string.Create(CultureInfo.InvariantCulture,
-            $"bat={device.BatteryPercent?.ToString(CultureInfo.InvariantCulture) ?? "-",-4} " +
+            // The band where there is one, so the log records what the app displayed rather
+            // than the stand-in number behind it.
+            $"bat={device.BatteryText ?? "-",-6} " +
             $"connected={device.IsConnected,-5} " +
             $"charge={device.ChargeState,-11} " +
             $"stale={device.IsStale,-5} " +
@@ -123,7 +126,9 @@ void Scan()
             continue;
 
         entry.LastState = state;
-        if (device.BatteryPercent is { } percent)
+        if (device.BatteryBand is { } band)
+            entry.Bands.Add(band);
+        else if (device.BatteryPercent is { } percent)
             entry.Values.Add(percent);
 
         Write($"[{DateTime.Now:HH:mm:ss}] {Truncate(device.Name, 28),-28} {state}");
@@ -180,6 +185,19 @@ void Summarize()
     {
         Write(string.Empty);
         Write($"  {entry.Name} [{entry.Transport}]");
+
+        // Asked before the granularity test rather than after it, because the test cannot
+        // reach the right answer here: XInput's four levels stand in as 5/20/60/100, and
+        // "not every value is a multiple of 10" would read that as true 0-100 granularity.
+        // The provider already knows the source is coarse, so it is quoted, not guessed at.
+        if (entry.Bands.Count > 0)
+        {
+            Write($"    Bands reported: {string.Join(", ", entry.Bands)}");
+            Write("    The provider declared this reading coarse, so the percentage behind it is a");
+            Write("    stand-in for sorting and thresholds only. Read the band, and expect an alert");
+            Write("    threshold to behave as though it sat on the boundary between two of them.");
+            continue;
+        }
 
         if (entry.Values.Count == 0)
         {
@@ -250,6 +268,12 @@ sealed class DeviceLog(string name, Transport transport)
 
     /// <summary>Distinct percentages, ordered, for the granularity verdict.</summary>
     public SortedSet<int> Values { get; } = [];
+
+    /// <summary>
+    /// Distinct band names, where the provider reported bands rather than percentages. Kept
+    /// apart from <see cref="Values"/> so the verdict cannot be drawn from a stand-in number.
+    /// </summary>
+    public SortedSet<string> Bands { get; } = new(StringComparer.Ordinal);
 
     public string? LastState { get; set; }
 }

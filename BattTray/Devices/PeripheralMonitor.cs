@@ -22,10 +22,14 @@ internal sealed class PeripheralMonitor(params IPeripheralProvider[] providers)
     /// </summary>
     public bool DeviceChangesAreWatched { get; set; }
 
-    /// <summary>Lowest battery level among connected devices, for the tray icon.</summary>
-    public int? LowestConnectedBattery => Peripherals
+    /// <summary>
+    /// The connected device with the least charge, for the tooltip. The device rather than its
+    /// percentage: a device reporting a band has a number only for ordering, so whatever shows
+    /// the answer has to reach the device to render it honestly.
+    /// </summary>
+    public Peripheral? LowestConnected => Peripherals
         .Where(p => p.IsConnected && p.BatteryPercent is not null)
-        .Min(p => p.BatteryPercent);
+        .MinBy(p => p.BatteryPercent);
 
     /// <summary>Raw evidence from every provider, for the diagnostics tool.</summary>
     public IReadOnlyList<DiagnosticNode> GetDiagnostics()
