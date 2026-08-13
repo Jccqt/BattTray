@@ -604,12 +604,16 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                 return DeviceCategory.Headset;
 
             case 0x05: // Peripheral
-                // Bits 4-5 flag keyboard/pointing; bits 0-3 name a specific device type.
+                // Bits 4-5 flag keyboard/pointing; bits 0-3 name a specific device type, and
+                // the values are the assigned-numbers ones: 1 joystick, 2 gamepad, 3 remote
+                // control, 4 sensing, 5 digitizer tablet, 6 card reader, 7 digital pen. A
+                // remote control gets no arm of its own — there is no category here to file it
+                // under, and Unknown is the honest answer rather than the nearest-looking one.
                 switch (minor & 0x0F)
                 {
-                    case 0x02 or 0x03:
+                    case 0x01 or 0x02:
                         return DeviceCategory.Gamepad;
-                    case 0x05:
+                    case 0x05 or 0x07:
                         return DeviceCategory.Pen;
                 }
 

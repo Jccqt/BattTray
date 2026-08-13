@@ -41,14 +41,26 @@ public class BluetoothCategorizationTests
         Assert.Equal(DeviceCategory.Keyboard, BluetoothPeripheralProvider.Categorize(0x0025C0u));
 
     [Theory]
-    [InlineData(0x002508u)] // Gamepad
-    [InlineData(0x00250Cu)] // Joystick
+    [InlineData(0x002504u)] // Joystick, device type 1
+    [InlineData(0x002508u)] // Gamepad, device type 2
     public void GamepadMinorTypesAreGamepads(uint classOfDevice) =>
+        // The device type is bits 5..2 of the low byte, so each value here is its number
+        // shifted up by two. Written out because these were off by one slot — 0x00250C was
+        // read as a joystick and matched, while the joystick above matched nothing and came
+        // back Unknown.
         Assert.Equal(DeviceCategory.Gamepad, BluetoothPeripheralProvider.Categorize(classOfDevice));
 
     [Fact]
-    public void DigitizerMinorTypeIsAPen() =>
-        Assert.Equal(DeviceCategory.Pen, BluetoothPeripheralProvider.Categorize(0x002514u));
+    public void ARemoteControlIsNotAGamepad() =>
+        // Device type 3, which sits next to the gamepad and is not one. There is no category
+        // for it, and Unknown says that rather than filing a TV remote under gamepads.
+        Assert.Equal(DeviceCategory.Unknown, BluetoothPeripheralProvider.Categorize(0x00250Cu));
+
+    [Theory]
+    [InlineData(0x002514u)] // Digitizer tablet, device type 5
+    [InlineData(0x00251Cu)] // Digital pen, device type 7
+    public void DigitizerAndPenMinorTypesArePens(uint classOfDevice) =>
+        Assert.Equal(DeviceCategory.Pen, BluetoothPeripheralProvider.Categorize(classOfDevice));
 
     [Fact]
     public void TheSpecificMinorTypeBeatsThePointingBits() =>
