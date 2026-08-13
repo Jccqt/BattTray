@@ -250,6 +250,25 @@ public class LowBatteryNotifierTests
     }
 
     [Fact]
+    public void ChargingClearsTheLatchWithNoReadingAtAll()
+    {
+        var recorder = new Recorder();
+        var settings = Settings();
+
+        recorder.Feed(settings, Device.At(15));
+        recorder.Feed(settings, Device.At(null, charge: ChargeState.Charging));
+        recorder.Feed(settings, Device.At(15));
+
+        // The charge-only source: a cable or a dock that can say "charging" and nothing about
+        // the level. Nothing obliges a charge signal to arrive with a number — it comes with
+        // the link — so the state that ends the discharge is exactly the state in which the
+        // reading guard has least to work with. Ordering the two tests the other way loses
+        // this device's latch forever: skipped for having no number, it can never re-arm by
+        // the 15-point climb either, because it never reports a number to climb.
+        Assert.Equal(2, recorder.Count);
+    }
+
+    [Fact]
     public void ADisconnectedDeviceClaimingChargeDoesNotClearTheLatch()
     {
         var recorder = new Recorder();
