@@ -13,8 +13,20 @@ namespace BattTray.Tray;
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
-    /// <summary>Shell tooltips are truncated past this length.</summary>
-    const int MaxTooltipLength = 63;
+    /// <summary>The longest tooltip <see cref="NotifyIcon.Text"/> accepts; 128 throws.</summary>
+    /// <remarks>
+    /// This was 63, which is the .NET Framework limit rather than the shell's. Measured on
+    /// this runtime: 127 characters are accepted, 128 raises, and the shell publishes every
+    /// character of what it is given — a 122-character tooltip comes back whole through the
+    /// automation tree, which is the channel a screen reader reads.
+    ///
+    /// Worth claiming the room, because the tooltip is the only part of this app a keyboard
+    /// can reach. The menu does open on the Menu key, but it is shown without activation so
+    /// that the shell's hidden-icons flyout survives — see OnTrayMouseUp — and a drop-down
+    /// that never takes the focus never receives a keystroke either. Arrow keys go on driving
+    /// the flyout behind it. So this string, and not the menu, is what a keyboard user has.
+    /// </remarks>
+    const int MaxTooltipLength = 127;
 
     /// <summary>
     /// How long a burst of device-change notifications is left to settle before rescanning.
@@ -279,7 +291,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             _monitor.Refresh();
             ApplyThemeIcon();
-            _notifyIcon.Text = BuildTooltip();
+            _notifyIcon.Text = BuildTooltip(_monitor.Peripherals, _monitor.LowestConnected);
 
             // Given the full list, not the filtered one: hiding disconnected devices is a
             // display preference and must not silence a device that is genuinely low.
@@ -311,9 +323,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _iconMatchesLightTheme = lightTheme;
     }
 
-    string BuildTooltip()
+    /// <summary>
+    /// The tray icon's tooltip: what is attached, and the most urgent reading among it.
+    /// </summary>
+    /// <remarks>
+    /// Static, and handed both the list and the monitor's pick rather than reaching for a
+    /// monitor itself, so the wording can be tested without a tray icon — the same reason
+    /// <see cref="DescribeDevice"/> and <see cref="FormatAge"/> are. It matters more here than
+    /// for a menu row: this string is the app's only keyboard-reachable content, so its
+    /// truncation rule is worth pinning rather than eyeballing. See
+    /// <see cref="MaxTooltipLength"/>.
+    /// </remarks>
+    internal static string BuildTooltip(IReadOnlyList<Peripheral> devices, Peripheral? lowest)
     {
-        var devices = _monitor.Peripherals;
         if (devices.Count == 0)
             return "BattTray — no devices";
 
@@ -323,7 +345,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // told the user nothing was there while a controller sat plainly connected.
         var live = devices.Where(d => d.IsConnected).ToList();
         var reporting = live.Where(d => d.BatteryPercent is not null).ToList();
-        var lowest = _monitor.LowestConnected;
 
         string text = (live.Count, reporting.Count) switch
         {
