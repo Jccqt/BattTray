@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using BattTray.Devices;
 using BattTray.Tests.Support;
 using BattTray.Tray;
@@ -110,6 +111,29 @@ public class MenuRenderingTests
 
         Assert.Equal("dev — 80% (stale) · disconnected", TrayApplicationContext.DescribeDevice(device));
     }
+
+    [Fact]
+    public void TheFooterRowNamesTheAppAndTheBuildRunning()
+    {
+        // The row is there so a bug report can name the binary without its author hunting down
+        // the exe and opening its properties, and both halves earn their place: a bare "0.1.0"
+        // is attached to nothing in a menu whose other rows are device names, and the name
+        // alone answers nothing at all.
+        string row = TrayApplicationContext.DescribeVersion();
+
+        // Matched by shape rather than against "BattTray 0.", which would have been a test that
+        // failed on the day the app reached 1.0 and told whoever fixed it nothing. What it is
+        // really guarding is the "unknown" fallback reaching a user's eyes: an app that cannot
+        // name its own build states that in the one row whose entire job is naming it.
+        Assert.Matches(new Regex(@"^BattTray \d+\.\d+\.\d+"), row);
+    }
+
+    [Fact]
+    public void TheFooterRowLeavesTheBuildRevisionToTheDump() =>
+        // The revision the SDK appends after a '+' is a forty-character hash, and a menu is as
+        // wide as its widest row. The exact build is in the dump, which is where anyone who
+        // needs the revision is already going.
+        Assert.DoesNotContain('+', TrayApplicationContext.DescribeVersion());
 
     [Theory]
     [InlineData(0, ", last seen just now")]

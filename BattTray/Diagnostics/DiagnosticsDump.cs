@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using BattTray.Devices;
 
@@ -25,8 +24,12 @@ internal static class DiagnosticsDump
     /// <summary>Where the reader is asked to send the file.</summary>
     const string IssuesUrl = "https://github.com/Jccqt/BattTray/issues";
 
-    /// <summary>The build that produced the dump; see <see cref="ReadAppVersion"/>.</summary>
-    public static string AppVersion { get; } = ReadAppVersion();
+    /// <summary>
+    /// The build that produced the dump: the exact one, revision and all — see
+    /// <see cref="BattTray.AppVersion.Full"/>. The tray's version row quotes the same reader in
+    /// its shorter form, so a dump and the row the user read cannot name different builds.
+    /// </summary>
+    public static string Version => BattTray.AppVersion.Full;
 
     /// <summary>Writes the whole dump, header first, to <paramref name="write"/>.</summary>
     public static void WriteAll(Action<string> write)
@@ -66,7 +69,7 @@ internal static class DiagnosticsDump
     public static void WriteHeader(Action<string> write, DateTimeOffset taken)
     {
         write("=== BattTray diagnostics");
-        write($"  version : {AppVersion}");
+        write($"  version : {Version}");
         write($"  os      : {Environment.OSVersion.VersionString} ({RuntimeInformation.OSArchitecture})");
         write($"  taken   : {taken.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture)}");
         write(string.Empty);
@@ -134,24 +137,5 @@ internal static class DiagnosticsDump
         write("  Cross-check now: Settings > Bluetooth & devices should show the same percentage.");
         write("  Both read the same property, so a mismatch means a bug here; a match proves the");
         write("  plumbing only, not the device's honesty about its own charge.");
-    }
-
-    /// <summary>
-    /// The version to stamp on a dump: the informational one, which carries the source revision
-    /// the SDK appends after a '+'.
-    /// </summary>
-    /// <remarks>
-    /// That suffix is what separates two builds carrying the same version number, which is the
-    /// normal case for anything built between releases. Falling back to the assembly version
-    /// rather than to nothing, because a number without a revision still identifies a release
-    /// binary, and identifying it is the whole job.
-    /// </remarks>
-    static string ReadAppVersion()
-    {
-        var assembly = typeof(DiagnosticsDump).Assembly;
-
-        return assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? assembly.GetName().Version?.ToString()
-            ?? "unknown";
     }
 }

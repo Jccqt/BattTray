@@ -43,7 +43,7 @@ public class DiagnosticsDumpTests
         var lines = Capture(write => DiagnosticsDump.WriteHeader(write, Taken));
 
         Assert.Equal("=== BattTray diagnostics", lines[0]);
-        Assert.Equal($"  version : {DiagnosticsDump.AppVersion}", lines[1]);
+        Assert.Equal($"  version : {DiagnosticsDump.Version}", lines[1]);
         Assert.Contains(Environment.OSVersion.VersionString, lines[2]);
         Assert.Equal("  taken   : 2026-08-13 21:04:11 +08:00", lines[3]);
     }
@@ -53,8 +53,8 @@ public class DiagnosticsDumpTests
     {
         // "unknown" is the last resort for an assembly carrying no version attribute at all.
         // Reaching it in a shipped build would leave every dump unattributable, silently.
-        Assert.NotEqual("unknown", DiagnosticsDump.AppVersion);
-        Assert.StartsWith("0.", DiagnosticsDump.AppVersion, StringComparison.Ordinal);
+        Assert.NotEqual("unknown", DiagnosticsDump.Version);
+        Assert.StartsWith("0.", DiagnosticsDump.Version, StringComparison.Ordinal);
     }
 
     [Fact]

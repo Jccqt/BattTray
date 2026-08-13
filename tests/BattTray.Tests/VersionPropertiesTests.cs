@@ -71,6 +71,24 @@ public class VersionPropertiesTests
     }
 
     [Fact]
+    public void TheVersionTheRunningAppStatesIsTheOneTheCsprojDeclares() =>
+        // What the tray's footer row shows and what the dump header stamps both come from here,
+        // so this is the assertion that makes either of them worth reading: a row quoting a
+        // number the build did not produce would be worse than no row, since a bug report would
+        // be filed against a binary that never existed.
+        Assert.Equal(Declared, AppVersion.Display);
+
+    [Fact]
+    public void TheDisplayVersionDropsOnlyTheBuildMetadata()
+    {
+        // Split on '+' rather than on '-': a "0.2.0-beta1" build is a different thing from
+        // "0.2.0" to whoever reads the report, and the prerelease suffix is part of the version
+        // rather than a note about which commit it came from.
+        Assert.StartsWith(AppVersion.Display, AppVersion.Full, StringComparison.Ordinal);
+        Assert.DoesNotContain('+', AppVersion.Display);
+    }
+
+    [Fact]
     public void TheProductVersionKeepsTheWholeDeclaredVersion() =>
         // The tab shows this one too, and unlike the file version it can carry a prerelease
         // suffix — so it is the field a "-beta1" release is actually legible in. The commit

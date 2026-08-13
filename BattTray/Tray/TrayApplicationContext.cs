@@ -383,8 +383,29 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _menu.Items.Add(new ToolStripMenuItem("Settings…", null, (_, _) => ShowSettings()));
         _menu.Items.Add(new ToolStripMenuItem("Save diagnostics…", null, (_, _) => SaveDiagnostics()));
         _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(new ToolStripMenuItem(DescribeVersion()) { Enabled = false });
         _menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => ExitApplication()));
     }
+
+    /// <summary>
+    /// The footer row: which build of the app this is.
+    /// </summary>
+    /// <remarks>
+    /// The app has no window, no title bar and no About box, so until this row existed the only
+    /// way to find out what was running was to go looking for the exe on disk and open its
+    /// properties — which is a question a bug report asks first and a user could not answer
+    /// without leaving the app entirely. It is the companion to the diagnostics header, and
+    /// reads from the same place so the two cannot disagree.
+    ///
+    /// Named rather than a bare number, because a menu whose other rows are device names would
+    /// otherwise leave "0.1.0" attached to nothing in particular.
+    ///
+    /// Disabled, like the device rows: it states a fact and there is nothing to click. That does
+    /// cost the obvious gesture — clicking to copy the version — which is worth having only once
+    /// there is somewhere for a click to go, and the row is the version's first home rather than
+    /// its last.
+    /// </remarks>
+    internal static string DescribeVersion() => $"BattTray {AppVersion.Display}";
 
     /// <summary>
     /// Writes the diagnostics dump and opens Explorer on it.

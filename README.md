@@ -36,6 +36,11 @@ The app has no resident window. It adds a tray icon; right-click it for the devi
 `Settings…`, `Save diagnostics…`, or `Exit`. Hovering shows the lowest connected level
 without opening anything. Only one instance runs at a time.
 
+The last line of the menu is the build you are running — `BattTray 0.1.0`, greyed out because
+there is nothing to click. With no window and no About box, the alternative was finding the
+exe on disk and opening its properties, which is a strange thing to ask of someone whose first
+sentence in an issue has to be which version they have.
+
 Starting the exe yourself opens the settings dialog, so a launch that only adds one more
 icon to a crowded tray still says it worked. Starting it again while it is already running
 does the same — the second process asks the first for the dialog and exits, rather than
@@ -325,6 +330,11 @@ the moment it was taken. A pasted dump with no build number is a bug report abou
 binary. Expect around 1.5 MB of it, which is why it says to attach the file rather than paste
 its contents.
 
+The build in that header and the one in the menu's last row come from the same reader, so a
+dump cannot name a different binary from the one whose version was quoted in the issue above
+it. The header carries the commit hash MSBuild appends as well; the row drops it, since it is
+forty characters and a menu is as wide as its widest row.
+
 There is a command-line form too, for anyone collecting dumps across several machines:
 
 ```bash
@@ -594,7 +604,7 @@ deliberate outcome, and no check here would tell you anything you did not alread
 dotnet test tests/BattTray.Tests/BattTray.Tests.csproj
 ```
 
-163 tests, about a tenth of a second, and none of them touches the machine they run on: no
+167 tests, about a tenth of a second, and none of them touches the machine they run on: no
 registry, no radio, no XInput, no tray icon. That is the line the suite is drawn along
 rather than a coincidence. The version tests below are the one place it bends — they read the
 csproj off disk and reflect over the built assembly — and the thing they are guarding is a
