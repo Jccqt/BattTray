@@ -91,9 +91,21 @@ flip between readings that each look authoritative, without saying which device 
 Levels live in the tooltip and the menu, where they stay attached to a device name.
 
 The only thing that varies is black versus white, which is contrast against the taskbar
-rather than state. Both variants are embedded in the exe (`Assets/*.ico`, 16-256px) and
-the app swaps them on `SystemEvents.UserPreferenceChanged`, so it follows a theme change
-immediately rather than at the next poll.
+rather than state. Both variants are embedded in the exe
+(`Assets/batttray-black.ico` and `-white.ico`, 16-256px) and the app swaps them on
+`SystemEvents.UserPreferenceChanged`, so it follows a theme change immediately rather than
+at the next poll.
+
+The icon Explorer shows for the exe is a third piece of artwork, and needs to be. The tray
+can swap variants because it knows what the taskbar is doing; a downloaded file is drawn
+once, on a background the exe never learns, so the bare black glyph that is right on a light
+taskbar all but disappears in a dark Explorer window. `Assets/batttray-app.ico` therefore
+carries its own background — a mid-blue tile with the mark knocked out in white — and is not
+embedded, being the only one nothing in the app ever loads. Blue rather than green for the
+same reason the tray icon shows no level: green on a battery reads as "charged", and the
+file icon is saying which app this is. It is generated from the black glyph by
+`tools/icons/Build-AppIcon.ps1` rather than drawn separately, so the mark on the exe cannot
+drift from the mark in the tray.
 
 The icon also survives an `explorer.exe` restart — verified rather than assumed, by
 killing Explorer and re-reading the notification area. WinForms `NotifyIcon` handles the
@@ -463,6 +475,28 @@ The result lands in `BattTray/bin/publish/win-x64/`. Those settings live in a pu
 profile rather than the csproj because `SelfContained` applies to the whole build graph:
 set in the csproj it breaks `dotnet run` and stops the diagnostics harness from
 referencing the app.
+
+### Tests
+
+```bash
+dotnet test tests/BattTray.Tests/BattTray.Tests.csproj
+```
+
+135 tests, about a tenth of a second, and none of them touches the machine they run on: no
+registry, no radio, no XInput, no tray icon. That is the line the suite is drawn along
+rather than a coincidence. Everything that talks to Windows is P/Invoke whose failure modes
+are the operating system's, and mocking it would only assert that the mocks were written the
+way the code expects — which is why the hardware-facing half is covered by the diagnostics
+harness below, against real devices, instead.
+
+What is left is pure and worth pinning: the low-battery latching rules, settings clamping,
+the Run-key command parser, class-of-device categorisation, radio addresses in device
+instance ids, and the strings the menu rows are built from. Most of it had only ever been
+verified by running the app and watching — which for the latching rules means waiting for a
+headset to discharge, and for the reading-age boundaries means waiting a day.
+
+The tests run on every push and, in the release workflow, between the build and the publish,
+so a tag cannot produce a binary the suite has not passed.
 
 ## Uninstalling
 
