@@ -396,8 +396,11 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
         // A name that survived CleanNodeName unchanged needs no explanation; the other two
         // cases are precisely where the menu shows something this line otherwise would not.
-        string? note = friendly is null
-            ? " (no friendly name here, so DEVPKEY_Device_DeviceDesc supplied it)"
+        // The fallback is judged the way ReadNodeName judges it — on whether this property
+        // amounts to a name, not on whether it is present — so an empty friendly name reads
+        // as the handover it is rather than as a suffix nobody stripped.
+        string? note = CleanNodeName(friendly) is null
+            ? " (no usable friendly name here, so DEVPKEY_Device_DeviceDesc supplied it)"
             : name == friendly ? null : " (profile suffix stripped)";
 
         return new DiagnosticProperty("node name", Key, raw, name + note);
@@ -524,13 +527,21 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
     /// <summary>
     /// The name this provider knows a node by: its friendly name, or its device description
-    /// when it publishes none, with the profile suffix stripped. Shared with the dump so the
+    /// when that yields nothing, with the profile suffix stripped. Shared with the dump so the
     /// name printed there is the name the menu uses.
     /// </summary>
+    /// <remarks>
+    /// Each candidate is cleaned before the fallback is judged, rather than the raw strings
+    /// being chained with <c>??</c>. A node can publish DEVPKEY_Device_FriendlyName as an empty
+    /// string, which is not the same as not publishing it: the property read hands back "", the
+    /// null test passes it, and the device description behind it is never reached — so a node
+    /// with a perfectly good description was listed under its bare radio address. Whether a
+    /// candidate amounts to a name is <see cref="CleanNodeName"/>'s question and is asked of
+    /// both, which also settles the whitespace-only case without a second rule for it.
+    /// </remarks>
     static string? ReadNodeName(uint devInst) =>
-        CleanNodeName(
-            ConfigManager.GetString(devInst, DevPropKeys.FriendlyName)
-            ?? ConfigManager.GetString(devInst, DevPropKeys.DeviceDesc));
+        CleanNodeName(ConfigManager.GetString(devInst, DevPropKeys.FriendlyName))
+        ?? CleanNodeName(ConfigManager.GetString(devInst, DevPropKeys.DeviceDesc));
 
     /// <summary>Strips the Bluetooth profile suffixes Windows appends to child node names.</summary>
     internal static string? CleanNodeName(string? name)
