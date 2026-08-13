@@ -127,6 +127,13 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                 BatteryPercent = reading?.Percent,
                 BatteryUpdatedUtc = reading?.UpdatedUtc,
                 IsConnected = device.IsConnected,
+
+                // Windows keeps the last percentage it saw after a device goes away and says
+                // nothing about when the link dropped, so on this transport a reading from a
+                // disconnected device is the leftover and a reading from a connected one is
+                // about now. That is this source's behaviour and not a rule of the model,
+                // which is why it is claimed here rather than derived in Peripheral.IsStale.
+                IsStale = !device.IsConnected,
             });
         }
 
@@ -152,6 +159,10 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                 BatteryPercent = reading.Percent,
                 BatteryUpdatedUtc = reading.UpdatedUtc,
                 IsConnected = reading.IsConnected,
+
+                // Same claim as above, from the same source: the node kept the number, the
+                // link flag says whether it is about now.
+                IsStale = !reading.IsConnected,
             });
         }
 

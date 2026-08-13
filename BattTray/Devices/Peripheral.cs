@@ -83,11 +83,32 @@ internal sealed record Peripheral
     /// <summary>When the battery reading was last refreshed by Windows, if known.</summary>
     public DateTime? BatteryUpdatedUtc { get; init; }
 
+    readonly bool _isStale;
+
     /// <summary>
-    /// True when the reading is a leftover from an earlier session rather than live data:
-    /// Windows keeps the last known percentage after a device disconnects.
+    /// True when <see cref="BatteryPercent"/> is a leftover from an earlier session rather
+    /// than a reading about now. Stated by the provider, which is the only code that knows
+    /// whether its source remembers readings across a disconnect.
     /// </summary>
-    public bool IsStale => !IsConnected && BatteryPercent is not null;
+    /// <remarks>
+    /// This was derived as <c>!IsConnected &amp;&amp; BatteryPercent is not null</c>, and on
+    /// every source written so far the two do coincide — but they coincide because of a
+    /// hardware limitation rather than because of a rule, and folding them together made the
+    /// interesting case inexpressible. A pad present over USB carrying a percentage from its
+    /// last Bluetooth session is connected and stale at once; its row wants to read
+    /// "87% (stale) · charging", which the derivation ruled out before any of the correlation
+    /// work could start. Connectedness is about the link, staleness is about the number, and
+    /// nothing but a provider is in a position to say the second.
+    ///
+    /// A device with no reading is never stale, whatever a provider sets: there is nothing
+    /// cached to have aged, and "no battery reported (stale)" would be claiming an age for a
+    /// number that was never taken.
+    /// </remarks>
+    public bool IsStale
+    {
+        get => _isStale && BatteryPercent is not null;
+        init => _isStale = value;
+    }
 
     /// <summary>
     /// The charge as it may be shown to someone: the band name where the reading is one, the

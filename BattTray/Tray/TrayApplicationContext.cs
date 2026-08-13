@@ -474,14 +474,27 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// see XInputGamepadProvider for why the one byte that looked as though it could does
     /// not — so it is kept as the rendering a charge source would land on rather than as
     /// something the menu has shown.
+    ///
+    /// The row states two facts and states each once: what the reading is, then what the
+    /// device is doing. The age belongs to the first clause because it is the reading's age
+    /// and not the link's — a device can be present and carrying a number from an earlier
+    /// session, and that row has to read "87% (stale) · charging" rather than picking one of
+    /// the two halves to believe. Which is why nothing here asks about connectedness to find
+    /// out whether a number is current: see <see cref="Peripheral.IsStale"/>.
     /// </remarks>
     internal static string DescribeDevice(Peripheral device)
     {
-        string battery = device.BatteryText ?? "no battery reported";
+        string battery = device.BatteryText switch
+        {
+            null => "no battery reported",
+            { } text when device.IsStale => $"{text} (stale{FormatAge(device.BatteryUpdatedUtc)})",
+            { } text => text,
+        };
 
         string status = device switch
         {
-            { IsConnected: false } => $"disconnected{FormatAge(device.BatteryUpdatedUtc)}",
+            // Ahead of charging, which is a claim about a link that is no longer there.
+            { IsConnected: false } => "disconnected",
             { ChargeState: ChargeState.Charging } => "charging",
             _ => "connected",
         };
@@ -489,7 +502,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return $"{device.Name} — {battery} · {status}";
     }
 
-    /// <summary>Renders how long ago a cached reading was taken, e.g. " · 4d ago".</summary>
+    /// <summary>Renders how long ago a reading was taken, e.g. ", last seen 4d ago".</summary>
     internal static string FormatAge(DateTime? updatedUtc)
     {
         if (updatedUtc is not { } timestamp)

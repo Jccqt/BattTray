@@ -135,11 +135,14 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
                 BatteryBand = verdict.Band?.Name,
                 ChargeState = verdict.Charge,
 
-                // Nothing here is ever stale, unlike Bluetooth: XInput keeps no memory of a
-                // pad that has gone, so a slot that answered at all answered about now. There
+                IsConnected = true,
+
+                // Never stale, unlike Bluetooth: XInput keeps no memory of a pad that has
+                // gone, so a slot that answered at all answered about now. Said rather than
+                // left to the default, since freshness is a provider's claim to make. There
                 // is no BatteryUpdatedUtc for the same reason — the reading carries no
                 // timestamp, and inventing one would only make the menu's "last seen" lie.
-                IsConnected = true,
+                IsStale = false,
             });
         }
 

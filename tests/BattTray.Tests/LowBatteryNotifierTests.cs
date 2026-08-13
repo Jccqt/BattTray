@@ -144,11 +144,36 @@ public class LowBatteryNotifierTests
     {
         var recorder = new Recorder();
 
-        recorder.Feed(Settings(), Device.At(5, connected: false));
+        recorder.Feed(Settings(), Device.At(5, connected: false, stale: true));
 
         // Windows keeps the last known percentage after a disconnect, so a headset that was
         // at 5% last week would otherwise alert on every poll, forever.
         Assert.Equal(0, recorder.Count);
+    }
+
+    [Fact]
+    public void IgnoresAStaleReadingFromADeviceThatIsStillHere()
+    {
+        var recorder = new Recorder();
+
+        // The case the old connection test could not catch: a pad on a cable carrying 5% from
+        // its last wireless session is not at 5% now, and the cable is the reason.
+        recorder.Feed(Settings(), Device.At(5, stale: true));
+
+        Assert.Equal(0, recorder.Count);
+    }
+
+    [Fact]
+    public void AFreshReadingStillAlertsFromADeviceThatHasDisconnected()
+    {
+        var recorder = new Recorder();
+
+        // The other half of the split. No source does this today — Bluetooth is why the two
+        // used to be one — but a level reported as the link drops is a level about now, and
+        // the rule this class applies is about the reading's age and nothing else.
+        recorder.Feed(Settings(), Device.At(5, connected: false));
+
+        Assert.Equal(1, recorder.Count);
     }
 
     [Fact]
@@ -158,7 +183,7 @@ public class LowBatteryNotifierTests
         var settings = Settings();
 
         recorder.Feed(settings, Device.At(15));
-        recorder.Feed(settings, Device.At(15, connected: false));
+        recorder.Feed(settings, Device.At(15, connected: false, stale: true));
         recorder.Feed(settings, Device.At(15));
 
         // Unplug and replug at the same level is one discharge, not two.
@@ -205,6 +230,38 @@ public class LowBatteryNotifierTests
         // No provider sets Charging today. This is the rule waiting for one — a charge signal
         // ends the discharge the warning was about, without needing the 15-point climb.
         Assert.Equal(2, recorder.Count);
+    }
+
+    [Fact]
+    public void ChargingClearsTheLatchEvenWhenTheReadingIsStale()
+    {
+        var recorder = new Recorder();
+        var settings = Settings();
+
+        recorder.Feed(settings, Device.At(15));
+        recorder.Feed(settings, Device.At(15, stale: true, charge: ChargeState.Charging));
+        recorder.Feed(settings, Device.At(15));
+
+        // The row this feature exists to make expressible — "15% (stale) · charging" — is a
+        // device on a cable whose number came from its last wireless session. The charge is
+        // about now even though the number is not, so the discharge is over and the latch
+        // has to go: with the age tested first it never reached this rule.
+        Assert.Equal(2, recorder.Count);
+    }
+
+    [Fact]
+    public void ADisconnectedDeviceClaimingChargeDoesNotClearTheLatch()
+    {
+        var recorder = new Recorder();
+        var settings = Settings();
+
+        recorder.Feed(settings, Device.At(15));
+        recorder.Feed(settings, Device.At(15, connected: false, stale: true, charge: ChargeState.Charging));
+        recorder.Feed(settings, Device.At(15));
+
+        // The precedence the menu row uses too: charge arrives with the link, so a charge
+        // claim outliving the link is not evidence of anything. One discharge, one alert.
+        Assert.Equal(1, recorder.Count);
     }
 
     [Fact]

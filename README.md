@@ -136,9 +136,11 @@ address on reconnect, which can otherwise leave duplicate battery nodes behind.
 ### Two behaviours worth knowing
 
 **Readings survive disconnection.** Windows keeps the last known percentage after a device
-goes away, so a value alone does not mean the device is live. Devices are marked
-`IsStale` when they report a battery but are not connected, and the menu shows how long
-ago the reading was taken.
+goes away, so a value alone does not mean the device is live. This provider therefore marks
+a reading from a disconnected device `IsStale`, and the menu shows how long ago it was
+taken. That is a claim about this source rather than a rule of the model — `Peripheral`
+records staleness as its own fact, so a device that is present while its number is not can
+be described. Nothing on this transport produces one yet.
 
 **Charging state is not available over Bluetooth.** A full dump of every device property
 on a battery-reporting node showed no charging flag — Bluetooth Classic simply does not
@@ -152,30 +154,57 @@ and on the hardware here that is weaker than it sounds. A cable being attached i
 charging signal — the catch is that the node which knows about the cable is not the node
 which knows the percentage. Windows files a device's BLE and USB faces as separate
 containers under different PIDs: this controller is container
-`3718a527-31ac-5f1f-ac4b-b763b32cf562` at PID `301B` over BLE and
-`fcb6d6dc-5fca-5a5b-846e-f04e82c61d38` at PID `310A` wired. Correlating the two is a
-vendor-id-and-name heuristic rather than a lookup — the VID matches, the container id does
-not, and the wired composite node calls itself only "USB Composite Device", with the product
-string on its HID interfaces ("8BitDo Ultimate 2C Wireless Controller") not an exact match
-for the BLE node's name ("8BitDo Ultimate 2C Wireless") either. The other route is a device
-that declares charge in a HID report, which none attached here does — see
+`3718a527-31ac-5f1f-ac4b-b763b32cf562` at PID `301B` over BLE, and something under PID
+`310A` over USB. Correlating the two is a vendor-id-and-name heuristic rather than a
+lookup — the VID matches, the container id does not, and the USB composite node calls
+itself only "USB Composite Device", with the product string on its HID interfaces
+("8BitDo Ultimate 2C Wireless Controller") not an exact match for the BLE node's name
+("8BitDo Ultimate 2C Wireless") either. The other route is a device that declares charge in
+a HID report, which none attached here does — see
 [`--probe-hid`](#probing-for-a-battery-in-hid-report-descriptors).
 
 Worse than a loose match: the heuristic's premise is unsound as stated. The pad's 2.4 GHz
 receiver enumerates under that same PID `310A`, so "a USB node with this VID is present" does
 not mean a cable is attached — it means the pad is reachable over USB by *some* route, which
-is the same wall [`WIRED` is not a cable](#wired-is-not-a-cable) runs into. The one thread
-left is the USB serial: the receiver is `USB\VID_2DC8&PID_310A\991252A6A7`, and if a cabled
-pad enumerates a different one, that distinguishes them — per device, by observation, not as
-a rule that generalises to hardware nobody has held.
+is the same wall [`WIRED` is not a cable](#wired-is-not-a-cable) runs into.
 
-The model would have to move first, too. A merged row would want to read
-`87% (stale) · charging` — a live device carrying an old number — and `Peripheral.IsStale`
-is derived as `!IsConnected && BatteryPercent is not null`, so that state cannot be
-expressed. Present-over-USB with a reading from the last BLE session is exactly the case the
-derivation rules out, and both `DescribeDevice` and the low-battery check branch on
-`IsConnected` before anything else. Unpicking staleness from connectedness in the record is
-the first move, not the VID heuristic.
+The one thread left was the USB serial, and it has now been pulled from both ends in one
+session — pad on the receiver with no cable, then cabled with the receiver out:
+
+| | serial | container id |
+| --- | --- | --- |
+| 2.4 GHz receiver | `991252A6A7` | `5eefb0e2-846c-595f-b3eb-d6a13ef55712` |
+| cable | `D8CF246541` | `a9d21323-5cf2-5b9e-b646-738d1fc676f0` |
+
+So a cabled pad does enumerate a different serial from its receiver, and that is the only
+thing separating them: same VID and PID, same children (`MI_00` "Xbox 360 Controller for
+Windows", `MI_01` collections, `MI_02`, `IG_00`), same `BATTERY_TYPE_WIRED` out of XInput
+either way. Both faces are a "USB Composite Device" and neither says which it is, so the
+serial is a fact recorded about one pad — "`D8CF246541` means cabled" — and not a rule that
+generalises to hardware nobody has held.
+
+**Do not reach for the container id.** An earlier run recorded the cabled face as
+`fcb6d6dc-5fca-5a5b-846e-f04e82c61d38`; the same pad on the same cable now reports
+`a9d21323-…`, while the receiver's serial came back byte-identical to the value recorded
+weeks earlier. The container id moves with the USB port and with re-enumeration, which makes
+it look like a cable/receiver distinction when read from one side only. It is not one.
+
+The BLE face did not move through any of this: still disconnected, still 87% from five days
+earlier, cable in or out. No reading appeared on the USB side and `ChargeState` stayed
+`Unknown` in both runs, so attaching a cable changed nothing any provider can see. That is
+the measurement keeping this section a design note rather than a plan.
+
+The model has since moved out of the way, which was the first job and not the VID heuristic.
+A merged row wants to read `87% (stale) · charging` — a live device carrying an old number —
+and `Peripheral.IsStale` used to be derived as `!IsConnected && BatteryPercent is not null`,
+so that state could not be expressed at all. Staleness is now its own fact, stated by the
+provider that knows whether its source remembers: connectedness is about the link, staleness
+is about the number, and the two coincide on Bluetooth because of the hardware rather than
+because of a rule. The record still refuses to call a missing reading stale, since there is
+nothing there to have aged. `DescribeDevice` puts the age with the reading instead of with
+the word "disconnected", and the low-battery check asks whether a number is current rather
+than whether the device is attached. What is left for correlation is the evidence, which is
+where the difficulty always was.
 
 ## How XInput controller detection works
 
@@ -227,7 +256,9 @@ GHz receiver, slot 0 still answers `BATTERY_TYPE_WIRED` — with the same `VID_2
 a bus-powered USB device. Nothing in XInput's answer separates a pad on a cable from a pad on
 a dongle. A row saying either would be wrong half the time, so the byte is read as the only
 thing it supports — *XInput has no battery for this device* — and the peripheral carries no
-reading and `ChargeState.Unknown`.
+reading and `ChargeState.Unknown`. The two routes are distinguishable one layer down, by a
+serial recorded per device rather than by anything XInput says — the measurement is under
+[Two behaviours worth knowing](#two-behaviours-worth-knowing).
 
 Two consequences follow, and both are about this hardware rather than about the approach.
 
@@ -236,8 +267,10 @@ cannot ([no descriptor here declares one](#probing-for-a-battery-in-hid-report-d
 and XInput's one candidate byte turned out to mean something else. The rendering in
 `DescribeDevice` and the latch release in `LowBatteryNotifier` are both kept, and both are
 unreached — they are the shape a charge source would plug into, not behaviour the app has
-performed. The latch release carries a note about ordering: a source reporting charge without
-a percentage needs its test moved above the percentage guard.
+performed. The latch release reads the charge state before it reads the percentage, because
+charge arrives with the link rather than with the number: a source that reports charge
+without a percentage, or beside a stale one, would otherwise be dropped by the guard a line
+earlier and never release the latch it should.
 
 **The banded path has never run either.** Every occupied slot observed on the development
 machine, wired and on the receiver, reported `WIRED`. `ChargeState.Discharging`, the four
@@ -515,7 +548,7 @@ referencing the app.
 dotnet test tests/BattTray.Tests/BattTray.Tests.csproj
 ```
 
-147 tests, about a tenth of a second, and none of them touches the machine they run on: no
+158 tests, about a tenth of a second, and none of them touches the machine they run on: no
 registry, no radio, no XInput, no tray icon. That is the line the suite is drawn along
 rather than a coincidence. Everything that talks to Windows is P/Invoke whose failure modes
 are the operating system's, and mocking it would only assert that the mocks were written the
@@ -524,7 +557,8 @@ harness below, against real devices, instead.
 
 What is left is pure and worth pinning: the low-battery latching rules, settings clamping,
 the Run-key command parser, class-of-device categorisation, radio addresses in device
-instance ids, the strings the menu rows are built from, and everything around the
+instance ids, the strings the menu rows are built from — including the states no hardware
+here can reach, such as a connected device carrying a stale reading — and everything around the
 diagnostics dump except the two sweeps themselves — its header, where the file goes, and
 how the flag is read. Most of it had only ever been
 verified by running the app and watching — which for the latching rules means waiting for a

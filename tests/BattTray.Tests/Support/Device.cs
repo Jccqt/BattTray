@@ -15,10 +15,17 @@ namespace BattTray.Tests.Support;
 static class Device
 {
     /// <summary>A device reporting a true percentage, connected unless told otherwise.</summary>
+    /// <param name="stale">
+    /// Whether the reading is a leftover rather than one about now. Independent of
+    /// <paramref name="connected"/> on purpose — the two are separate facts, and passing
+    /// <c>connected: false</c> alone no longer implies a cached number. Tests that mean a
+    /// Bluetooth device that has gone away say both, which is what that provider sets.
+    /// </param>
     public static Peripheral At(
         int? percent,
         string id = "dev",
         bool connected = true,
+        bool stale = false,
         ChargeState charge = ChargeState.Unknown) =>
         new()
         {
@@ -27,6 +34,7 @@ static class Device
             Transport = Transport.Bluetooth,
             BatteryPercent = percent,
             IsConnected = connected,
+            IsStale = stale,
             ChargeState = charge,
         };
 

@@ -43,21 +43,72 @@ public class MenuRenderingTests
             TrayApplicationContext.DescribeDevice(Device.At(80, charge: ChargeState.Charging)));
 
     [Fact]
-    public void ADisconnectedDeviceCarriesTheAgeOfItsCachedReading()
+    public void AStaleReadingCarriesItsAge()
     {
-        var device = Device.At(80, connected: false) with { BatteryUpdatedUtc = DateTime.UtcNow.AddHours(-5) };
+        var device = Device.At(80, connected: false, stale: true)
+            with { BatteryUpdatedUtc = DateTime.UtcNow.AddHours(-5) };
 
-        Assert.Equal("dev — 80% · disconnected, last seen 5h ago", TrayApplicationContext.DescribeDevice(device));
+        // The age sits with the number rather than with the link, because it is the number's
+        // age. The clause used to hang off "disconnected", which is why a present device with
+        // an old reading had nowhere to put it.
+        Assert.Equal(
+            "dev — 80% (stale, last seen 5h ago) · disconnected",
+            TrayApplicationContext.DescribeDevice(device));
     }
+
+    [Fact]
+    public void AStaleReadingWithNoTimestampSaysOnlyThatItIsStale()
+    {
+        // Windows has no timestamp for some nodes. Better "(stale)" alone than an age the app
+        // does not have.
+        var device = Device.At(80, connected: false, stale: true);
+
+        Assert.Equal("dev — 80% (stale) · disconnected", TrayApplicationContext.DescribeDevice(device));
+    }
+
+    [Fact]
+    public void ALiveDeviceCanCarryAnOldReading()
+    {
+        // The row the derivation ruled out, and the one any charge-correlation work has to be
+        // able to render: present and charging over a cable, with a percentage from the last
+        // wireless session. Both facts, neither dropped.
+        var device = Device.At(87, stale: true, charge: ChargeState.Charging);
+
+        Assert.Equal("dev — 87% (stale) · charging", TrayApplicationContext.DescribeDevice(device));
+    }
+
+    [Fact]
+    public void AFreshReadingFromADisconnectedDeviceIsNotMarkedStale()
+    {
+        // Disconnection is not what makes a number old. A source that reports a level as the
+        // link drops is quoted plainly; only the age clause is missing, because there is none.
+        var device = Device.At(80, connected: false);
+
+        Assert.Equal("dev — 80% · disconnected", TrayApplicationContext.DescribeDevice(device));
+    }
+
+    [Fact]
+    public void ABandIsStillNamedWhenItIsStale() =>
+        // The stand-in number must not surface just because the row grew a clause.
+        Assert.Equal(
+            "pad — medium (stale) · connected",
+            TrayApplicationContext.DescribeDevice(Device.Band(percent: 60, name: "medium") with { IsStale = true }));
+
+    [Fact]
+    public void ADeviceWithNoReadingIsNeverCalledStale() =>
+        // Not "no battery reported (stale)": there is no number to have aged.
+        Assert.Equal(
+            "dev — no battery reported · disconnected",
+            TrayApplicationContext.DescribeDevice(Device.At(null, connected: false, stale: true)));
 
     [Fact]
     public void DisconnectedBeatsCharging()
     {
-        // Order matters: a cached reading cannot be evidence of charging now, whatever the
-        // last poll saw.
-        var device = Device.At(80, connected: false, charge: ChargeState.Charging);
+        // Order matters, though for a different reason than the reading's: charging is a claim
+        // about a link, and the link is gone. The number keeps its own clause either way.
+        var device = Device.At(80, connected: false, stale: true, charge: ChargeState.Charging);
 
-        Assert.Equal("dev — 80% · disconnected", TrayApplicationContext.DescribeDevice(device));
+        Assert.Equal("dev — 80% (stale) · disconnected", TrayApplicationContext.DescribeDevice(device));
     }
 
     [Theory]

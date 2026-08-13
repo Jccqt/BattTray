@@ -11,8 +11,8 @@ namespace BattTray.Tray;
 /// long as the device stays low, which trains the user to dismiss the warning that matters,
 /// so each device latches after alerting and only re-arms once it has climbed well clear of
 /// the threshold. Stale readings are ignored outright: Windows keeps reporting the last
-/// known percentage after a device disconnects, so a headset that was at 15% four days ago
-/// would otherwise alert forever. Latches are kept for devices that vanish, because a
+/// known percentage after a Bluetooth device disconnects, so a headset that was at 15% four
+/// days ago would otherwise alert forever. Latches are kept for devices that vanish, because a
 /// disconnect followed by a reconnect at the same low level is the same discharge, not a
 /// new one.
 /// </remarks>
@@ -48,23 +48,31 @@ internal sealed class LowBatteryNotifier(Action<string, string> showAlert)
 
         foreach (var device in peripherals)
         {
-            // A cached percentage from a disconnected device says nothing about now, and a
-            // connected device publishing no level has nothing to threshold.
-            if (!device.IsConnected || device.BatteryPercent is not { } percent)
-                continue;
-
             // Never taken: no provider sets Charging, XInput's WIRED having turned out to
             // mean "USB-attached, no battery information" rather than "on a cable". Kept
             // because the rule is the right one for a source that can say it — a charge
-            // signal ends the discharge the warning was about. Whichever source that turns
-            // out to be, check where this sits: a source that reports charge without a
-            // percentage needs the test moved above the guard, or the latch it should
-            // release will be skipped a line earlier for having no number.
-            if (device.ChargeState == ChargeState.Charging)
+            // signal ends the discharge the warning was about.
+            //
+            // Read before the reading is, because charge arrives with the link and not with
+            // the number: a device on a cable carrying a percentage from its last wireless
+            // session is charging now whatever that number is about, and the two cases the
+            // guard below drops — a stale reading, no reading at all — are exactly the ones a
+            // correlated or charge-only source would show up with. Connectedness is required
+            // for the same reason it beats charging in the menu row: a charge claim from a
+            // device that is no longer attached is a claim about a link that is gone.
+            if (device is { IsConnected: true, ChargeState: ChargeState.Charging })
             {
                 _latched.Remove(device.Id);
                 continue;
             }
+
+            // A leftover percentage says nothing about now, and a device publishing no level
+            // has nothing to threshold. The first test is the reading's age and not the link
+            // state, which it used to stand in for: what disqualifies a number is that it is
+            // old, so a device that is present while its reading is not stays quiet, and one
+            // that hands over a current reading on its way out is still worth a warning.
+            if (device.IsStale || device.BatteryPercent is not { } percent)
+                continue;
 
             if (percent > settings.LowBatteryThreshold)
             {
