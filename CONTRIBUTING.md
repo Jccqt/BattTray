@@ -5,15 +5,26 @@ get any other way: readings from hardware I do not own.
 
 ## Reporting a wrong or missing battery level
 
-Run the diagnostics harness and paste its output into the issue:
+**Right-click the tray icon and choose `Save diagnostics…`.** It writes a file to `%TEMP%`
+and opens Explorer with it selected; drag that file into the issue. Nothing to install and
+nothing to clone — if you have the exe you can produce it.
+
+The file holds the raw property bytes alongside the decoded value, which is what separates a
+decoding bug in this app from a device reporting something odd, plus a sweep of every device
+property Windows publishes and every HID report descriptor attached — which is what says
+whether a device this app shows nothing for has anything to show. Its header names the build
+that produced it, so the dump is evidence about a known binary. Attach it rather than pasting
+it; it runs to well over a megabyte.
+
+Please say which device you expected to see, and what the vendor's own app shows for it. The
+dump proves what Windows reports; only you can say what the device actually claims.
+
+From a clone, the same evidence and more is available from the harness, which can also watch
+a device across a discharge:
 
 ```bash
 dotnet run --project tools/BattTray.Diagnostics -- --once
 ```
-
-It prints the raw property bytes alongside the decoded value, which is what separates a
-decoding bug in this app from a device reporting something odd. Include the device name
-and, if you have one, what the vendor's own app shows for the same device.
 
 ## Building
 
@@ -36,8 +47,8 @@ They run on every push, and again before a tag can produce a binary.
 Nothing in the suite touches the machine it runs on, and nothing is mocked. Those are the
 same decision: the interop layer's failure modes belong to Windows, so a mock of it would
 only assert that the mock was written the way the code expects. Evidence about hardware
-comes from the diagnostics harness instead, which is why that tool exists and why a new
-provider is asked for a `GetDiagnostics()` before it is trusted.
+comes from the diagnostics dump instead, which is why it exists, why it ships in the exe,
+and why a new provider is asked for a `GetDiagnostics()` before it is trusted.
 
 So the suite covers the rules rather than the plumbing — latching, clamping, parsing,
 categorising, and the strings the menu is built from. If you add a rule with an edge case

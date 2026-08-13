@@ -33,8 +33,8 @@ the workflow in `.github/workflows/release.yml`.
 ## Using it
 
 The app has no resident window. It adds a tray icon; right-click it for the device list,
-`Settings…`, or `Exit`. Hovering shows the lowest connected level without opening
-anything. Only one instance runs at a time.
+`Settings…`, `Save diagnostics…`, or `Exit`. Hovering shows the lowest connected level
+without opening anything. Only one instance runs at a time.
 
 Starting the exe yourself opens the settings dialog, so a launch that only adds one more
 icon to a crowded tray still says it worked. Starting it again while it is already running
@@ -278,9 +278,42 @@ attachment XInput names outright.
 
 ## Diagnostics
 
+### From the exe: `Save diagnostics…`
+
+Right-click the tray icon and choose `Save diagnostics…`. It writes one file to `%TEMP%` and
+opens Explorer with the file selected, ready to be dragged into an issue. No SDK, no clone,
+no console — which is the entire point: the hardware this project cannot buy belongs to
+people who downloaded a single exe, and a request that starts "install the .NET SDK" is a
+request not to answer.
+
+The file carries all three dumps described below — the providers' raw evidence, the device
+property sweep and the HID sweep — under a header naming the build, the Windows version and
+the moment it was taken. A pasted dump with no build number is a bug report about an unknown
+binary. Expect around 1.5 MB of it, which is why it says to attach the file rather than paste
+its contents.
+
+There is a command-line form too, for anyone collecting dumps across several machines:
+
+```bash
+BattTray.exe --diagnostics           # to %TEMP%, then revealed in Explorer
+BattTray.exe --diagnostics dump.txt  # to that path, no window; the exit code is the answer
+```
+
+The flag is handled before the single-instance check, because none of the three dumps needs
+the tray: the providers are constructed on the spot and the probes talk to Windows rather
+than to the app. So a dump is neither refused because a copy is already running — which is
+exactly when you want one — nor does it raise a second tray icon on its way out. A named path
+suppresses the Explorer window, on the grounds that a script asking for a specific file does
+not need to be shown where it went.
+
+### From a clone: the accuracy harness
+
 `tools/BattTray.Diagnostics` is an accuracy harness. It drives the real providers through
 the real `IPeripheralProvider` seam rather than reimplementing them — a harness that
-duplicates what it is checking can only ever confirm itself.
+duplicates what it is checking can only ever confirm itself. The two probes below and the
+evidence dump live in `BattTray/Diagnostics` for the same reason, so the harness and the
+menu row run the same code rather than two copies of it; what the harness adds is watch
+mode, `--log`, and `--all`.
 
 ```bash
 dotnet run --project tools/BattTray.Diagnostics -- --once
@@ -482,7 +515,7 @@ referencing the app.
 dotnet test tests/BattTray.Tests/BattTray.Tests.csproj
 ```
 
-135 tests, about a tenth of a second, and none of them touches the machine they run on: no
+147 tests, about a tenth of a second, and none of them touches the machine they run on: no
 registry, no radio, no XInput, no tray icon. That is the line the suite is drawn along
 rather than a coincidence. Everything that talks to Windows is P/Invoke whose failure modes
 are the operating system's, and mocking it would only assert that the mocks were written the
@@ -491,7 +524,9 @@ harness below, against real devices, instead.
 
 What is left is pure and worth pinning: the low-battery latching rules, settings clamping,
 the Run-key command parser, class-of-device categorisation, radio addresses in device
-instance ids, and the strings the menu rows are built from. Most of it had only ever been
+instance ids, the strings the menu rows are built from, and everything around the
+diagnostics dump except the two sweeps themselves — its header, where the file goes, and
+how the flag is read. Most of it had only ever been
 verified by running the app and watching — which for the latching rules means waiting for a
 headset to discharge, and for the reading-age boundaries means waiting a day.
 
@@ -507,10 +542,11 @@ switched on. Turning `Start with Windows` off before deleting removes the second
 ## Contributing
 
 Pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Readings from hardware
-I do not own are the most useful thing to send: run the diagnostics harness and paste its
-output, since the raw bytes are what separate a decoding bug here from a device reporting
-something strange. Wired USB is unimplemented, and 2.4 GHz reaches only XInput controllers,
-so both are the clearest place to start on code.
+I do not own are the most useful thing to send, and cost one menu row:
+[`Save diagnostics…`](#from-the-exe-save-diagnostics) writes a file and opens Explorer on it.
+The raw bytes in it are what separate a decoding bug here from a device reporting something
+strange. Wired USB is unimplemented, and 2.4 GHz reaches only XInput controllers, so both are
+the clearest place to start on code.
 
 ## License
 

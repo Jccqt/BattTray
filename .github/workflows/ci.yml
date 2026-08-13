@@ -28,8 +28,7 @@ jobs:
 
       # Windows-hosted because the assembly under test is net10.0-windows, not because any
       # test touches the machine: nothing here reads a registry key, opens a radio or asks
-      # XInput anything. That is deliberate — the hardware-facing half is covered by
-      # tools/BattTray.Diagnostics, which needs the hardware in front of it and so cannot
-      # be a CI job.
+      # XInput anything. That is deliberate — the hardware-facing half is covered by the
+      # diagnostics dump, which needs the hardware in front of it and so cannot be a CI job.
       - name: Test
         run: dotnet test tests/BattTray.Tests/BattTray.Tests.csproj --configuration Release --no-build --verbosity normal
