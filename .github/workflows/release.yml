@@ -26,6 +26,51 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
+      # The exe's version is a csproj property and nothing about pushing a tag touches it,
+      # so v0.2.0 on a csproj still saying 0.1.0 ships a binary whose Properties > Details
+      # tab is quietly wrong — in the one place a user who downloaded a single unsigned file
+      # can check what they are about to run. Passing -p:Version= derived from the tag would
+      # fix the binary and leave the repo's own answer false between releases, with the same
+      # silence. So the disagreement is an error instead, and it is the first step in the job
+      # rather than a later one: this costs ten seconds where a failure after the build costs
+      # a re-tag on top of the wait.
+      #
+      # Only the comparison against the tag lives here, because only it needs a tag. That the
+      # csproj still states a version this can read, and that the version survives the build
+      # into the fields Explorer shows, are pinned by VersionPropertiesTests instead — which
+      # runs on every push rather than once a release, and covers causes of drift that no
+      # list written here could enumerate.
+      - name: Check the tag against the csproj version
+        shell: pwsh
+        env:
+          # Via the environment rather than inlined into the script: a tag name is not a
+          # PowerShell literal and git permits characters that would end the string early.
+          TAG: ${{ inputs.tag || github.ref_name }}
+        # Deliberately ASCII, and deliberately exiting rather than throwing. An em-dash in a
+        # string literal, read back under the wrong codepage, decodes to a smart quote that
+        # PowerShell accepts as a delimiter: the string ends early and the whole script
+        # becomes a parse error. That does fail the run rather than passing it — but it fails
+        # with a syntax complaint that looks nothing like a version mismatch, and blocks the
+        # release without having checked anything. The explicit exits keep the step's result
+        # out of the hands of however the shell wrapper treats a thrown error.
+        run: |
+          $project = 'BattTray/BattTray.csproj'
+          $expected = $env:TAG -replace '^v', ''
+          $nodes = ([xml](Get-Content $project -Raw)).SelectNodes('/Project/PropertyGroup/Version')
+          if ($nodes.Count -ne 1) {
+            Write-Host "::error::Expected exactly one <Version> in $project, found $($nodes.Count). This gate reads that element and nothing else, so whatever replaced it (VersionPrefix, a second PropertyGroup, an import) has to be taught here too."
+            exit 1
+          }
+          $version = $nodes[0].InnerText.Trim()
+          # -cne rather than -ne: PowerShell compares case-insensitively by default, which
+          # would pass v0.2.0-Beta against a csproj saying 0.2.0-beta and ship a version
+          # string that is not the one the tag names.
+          if ($version -cne $expected) {
+            Write-Host "::error::Tag $env:TAG releases version $expected, but $project says $version. Bump <Version> in the commit the tag points at, then move the tag onto it."
+            exit 1
+          }
+          Write-Host "$project says $version, which matches tag $env:TAG."
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'

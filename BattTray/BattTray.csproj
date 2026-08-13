@@ -17,7 +17,12 @@
   </PropertyGroup>
 
   <!-- Shown on the exe's Properties > Details tab, which is the only place a user who
-       downloaded a single unsigned file can check what they are about to run. -->
+       downloaded a single unsigned file can check what they are about to run.
+
+       Version is bumped by hand, in the commit the release tag points at. The release
+       workflow refuses to build when the two disagree rather than deriving the version from
+       the tag, so this stays the repo's own answer instead of a stale field nobody reads —
+       and forgetting it fails a release loudly instead of shipping the previous number. -->
   <PropertyGroup>
     <Version>0.1.0</Version>
     <Product>BattTray</Product>

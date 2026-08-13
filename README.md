@@ -542,15 +542,63 @@ profile rather than the csproj because `SelfContained` applies to the whole buil
 set in the csproj it breaks `dotnet run` and stops the diagnostics harness from
 referencing the app.
 
+### Releasing
+
+Pushing a `v*` tag is the whole process — `.github/workflows/release.yml` builds the tagged
+commit, runs the tests and attaches the exe to a draft release.
+
+The one manual step is `<Version>` in `BattTray/BattTray.csproj`, which has to be bumped in
+the commit the tag points at. The workflow's first step compares the two and fails the run
+if they disagree, before the SDK is even installed.
+
+That check exists because the failure it replaces is silent. Nothing about pushing a tag
+touches the csproj, so `v0.2.0` on a csproj still saying `0.1.0` builds and publishes
+happily, and the only symptom is the exe's `Properties > Details` tab reading `0.1.0` — the
+one place a user who downloaded a single unsigned file can check what they are about to run.
+Nobody looks there on the way out; they look there on the way in.
+
+Deriving `-p:Version=` from the tag would have fixed the binary, and it is the wrong trade
+here. It leaves the csproj free to say anything, so the repo's own answer to "what version is
+this" drifts and stays wrong between releases — the same silence moved somewhere less
+visible. A failed release is loud, and the fix is two commands.
+
+The tag comparison is all the workflow does, because it is the only part that needs a tag —
+and a check that runs once a release is a check nobody has run. Everything else is pinned by
+`VersionPropertiesTests` on every push: that the csproj still states a version the gate can
+read, and that the version survives the build into the binary's own version resource. That
+second one is the invariant that matters, because `Properties > Details` reads the resource
+rather than the csproj, and an explicit `<FileVersion>` or a `Directory.Build.targets` added
+later would move one without the other. Asserting against the built assembly catches any
+cause of that drift rather than the ones anybody thought to list.
+
+Two things the tab shows that the tag does not, worth knowing before comparing them by eye:
+
+| Tag | File version | Product version |
+|---|---|---|
+| `v0.1.0` | `0.1.0.0` | `0.1.0+b0e9b0e…` |
+
+File version is padded to four parts and **cannot carry a prerelease suffix** — a `v0.2.0-beta1`
+release shows `0.2.0.0` there, and is only legible as a beta in the product version below it.
+The trailing commit hash is MSBuild's, and it is welcome: it is what makes a diagnostics dump
+attributable to an exact build.
+
+Two limits left deliberately open. Nothing checks that a version *moves* — but re-using one
+now requires two tag names that differ only by their `v`, since any other duplicate would have
+to disagree with the csproj and fail the gate. And force-moving an existing tag onto a new
+commit ships a second binary under the first one's version; that is a deliberate act with a
+deliberate outcome, and no check here would tell you anything you did not already know.
+
 ### Tests
 
 ```bash
 dotnet test tests/BattTray.Tests/BattTray.Tests.csproj
 ```
 
-158 tests, about a tenth of a second, and none of them touches the machine they run on: no
+163 tests, about a tenth of a second, and none of them touches the machine they run on: no
 registry, no radio, no XInput, no tray icon. That is the line the suite is drawn along
-rather than a coincidence. Everything that talks to Windows is P/Invoke whose failure modes
+rather than a coincidence. The version tests below are the one place it bends — they read the
+csproj off disk and reflect over the built assembly — and the thing they are guarding is a
+property of the build rather than of any code, so there is nowhere purer to check it from. Everything that talks to Windows is P/Invoke whose failure modes
 are the operating system's, and mocking it would only assert that the mocks were written the
 way the code expects — which is why the hardware-facing half is covered by the diagnostics
 harness below, against real devices, instead.
@@ -560,7 +608,8 @@ the Run-key command parser, class-of-device categorisation, radio addresses in d
 instance ids, the strings the menu rows are built from — including the states no hardware
 here can reach, such as a connected device carrying a stale reading — and everything around the
 diagnostics dump except the two sweeps themselves — its header, where the file goes, and
-how the flag is read. Most of it had only ever been
+how the flag is read — and the version the built exe reports about itself, which is the half
+of [the release gate](#releasing) that does not need a tag to check. Most of it had only ever been
 verified by running the app and watching — which for the latching rules means waiting for a
 headset to discharge, and for the reading-age boundaries means waiting a day.
 
