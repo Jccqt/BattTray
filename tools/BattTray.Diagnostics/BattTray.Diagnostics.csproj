@@ -14,7 +14,11 @@
 
   <ItemGroup>
     <!-- Deliberately the real providers rather than a copy of their logic: a harness that
-         reimplements what it is checking can only ever confirm itself. -->
+         reimplements what it is checking can only ever confirm itself. The probes and the
+         dump come the same way — they live in BattTray/Diagnostics because the shipped exe
+         offers them too, and one copy is what keeps a pasted dump and a harness run
+         comparable. What is left here is the console, the watch loop and the granularity
+         verdict: the parts that need a terminal someone is sitting at. -->
     <ProjectReference Include="..\..\BattTray\BattTray.csproj" />
   </ItemGroup>
 

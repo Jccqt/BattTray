@@ -41,9 +41,10 @@ var log = OpenLog(args);
 var monitor = new PeripheralMonitor(new BluetoothPeripheralProvider(), new XInputGamepadProvider());
 var observations = new Dictionary<string, DeviceLog>(StringComparer.Ordinal);
 
-Write($"BattTray diagnostics — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-Write($"Machine: {Environment.MachineName}   OS: {Environment.OSVersion.VersionString}");
-Write(string.Empty);
+// The same header the app's own dump carries, from the same code: which build produced this,
+// on which Windows, when. The version it names is the app's rather than the harness's, which
+// is the right one — every line below comes from code in that assembly.
+DiagnosticsDump.WriteHeader(Write, DateTimeOffset.Now);
 
 // The probes answer a different question from the rest of this tool — what Windows knows
 // about devices no provider covers yet — so they run alone rather than ahead of the watch.
@@ -64,7 +65,9 @@ if (args.Contains("--probe-hid"))
     return 0;
 }
 
-DumpRawEvidence();
+// The app's own, so that the evidence section of a harness run and of a "Save diagnostics…"
+// dump are the same text produced by the same code rather than two renderings that drift.
+DiagnosticsDump.WriteProviderEvidence(Write, monitor);
 
 if (args.Contains("--once"))
 {
@@ -133,41 +136,6 @@ void Scan()
 
         Write($"[{DateTime.Now:HH:mm:ss}] {Truncate(device.Name, 28),-28} {state}");
     }
-}
-
-void DumpRawEvidence()
-{
-    Write("=== Raw evidence: what each provider actually read");
-    Write(string.Empty);
-
-    var nodes = monitor.GetDiagnostics();
-    if (nodes.Count == 0)
-    {
-        Write("  No provider reported any evidence. Either nothing is paired, or every");
-        Write("  provider returned the empty default from IPeripheralProvider.GetDiagnostics.");
-        return;
-    }
-
-    foreach (var node in nodes)
-    {
-        Write($"  [{node.Transport}] {node.Title}");
-        Write($"    instance : {node.InstanceId}");
-
-        foreach (var property in node.Properties)
-        {
-            Write($"    {property.Name,-16} : {property.Raw}");
-            Write($"    {string.Empty,-16}   {property.Key}");
-
-            if (property.Decoded is { } decoded)
-                Write($"    {string.Empty,-16}   -> {decoded}");
-        }
-
-        Write(string.Empty);
-    }
-
-    Write("  Cross-check now: Settings > Bluetooth & devices should show the same percentage.");
-    Write("  Both read the same property, so a mismatch means a bug here; a match proves the");
-    Write("  plumbing only, not the device's honesty about its own charge.");
 }
 
 void Summarize()

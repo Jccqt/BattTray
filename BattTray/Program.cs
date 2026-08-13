@@ -1,3 +1,4 @@
+using BattTray.Diagnostics;
 using BattTray.Settings;
 using BattTray.Tray;
 
@@ -9,8 +10,15 @@ namespace BattTray
         ///  The main entry point for the application.
         /// </summary>
         [STAThread]
-        static void Main(string[] args)
+        static int Main(string[] args)
         {
+            // Before the single-instance gate, and before any tray icon: a dump needs neither,
+            // and the moment someone most wants one is while the app is up and showing them
+            // something wrong. Handled here, that run neither gets turned away by the copy
+            // already holding the mutex nor puts a second icon in the tray on its way out.
+            if (DiagnosticsCommand.WasRequested(args, out string? dumpPath))
+                return DiagnosticsCommand.Run(dumpPath);
+
             // Windows starting the app is the only launch nobody asked to see: it happens
             // while the user is busy logging in, and an app that lives in the tray should
             // not interrupt that. Starting the exe by hand is a deliberate act, and a tray
@@ -28,7 +36,7 @@ namespace BattTray
                 if (!startedByWindows)
                     SingleInstance.RequestSettings();
 
-                return;
+                return 0;
             }
 
             // Entries written before the switch existed cannot say which of the two this is.
@@ -49,6 +57,7 @@ namespace BattTray
             instance.StartListening(context.ShowSettingsOnRequest);
 
             Application.Run(context);
+            return 0;
         }
     }
 }

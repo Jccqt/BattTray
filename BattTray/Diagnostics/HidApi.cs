@@ -8,13 +8,15 @@ namespace BattTray.Diagnostics;
 /// CreateFileW handle they hang off.
 /// </summary>
 /// <remarks>
-/// This lives in the diagnostics tool rather than in BattTray/Interop because nothing the app
-/// ships can afford it: enumerating the HID interfaces costs 2 ms, but opening all fifteen of
-/// them and parsing their caps costs 105 ms on the development machine, and
+/// This lives under Diagnostics rather than in BattTray/Interop because nothing on a poll path
+/// can afford it: enumerating the HID interfaces costs 2 ms, but opening all fifteen of them
+/// and parsing their caps costs 105 ms on the development machine, and
 /// <see cref="BattTray.Devices.IPeripheralProvider"/> is polled on the UI thread against a
-/// single-digit-millisecond budget. Moving any of this into a provider means finding a cheaper
-/// shape for it first — caching the handles, or narrowing the sweep to known VID/PIDs — not
-/// lifting these bindings as they stand.
+/// single-digit-millisecond budget. It ships inside the app so that someone with only the exe
+/// can run the sweep, which is a thing done once on request — not a licence for a provider to
+/// call it. Moving any of this onto a poll means finding a cheaper shape for it first —
+/// caching the handles, or narrowing the sweep to known VID/PIDs — not lifting these bindings
+/// as they stand.
 ///
 /// Every hid.dll entry point here returns BOOLEAN, a single byte, rather than the four-byte
 /// Win32 BOOL a bare <c>bool</c> would marshal as; each is annotated accordingly. Getting that

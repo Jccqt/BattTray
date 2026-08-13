@@ -1,4 +1,5 @@
 using BattTray.Devices;
+using BattTray.Diagnostics;
 using BattTray.Interop;
 using BattTray.Settings;
 using Microsoft.Win32;
@@ -380,9 +381,26 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Refresh", null, (_, _) => Refresh()));
         _menu.Items.Add(new ToolStripMenuItem("Settings…", null, (_, _) => ShowSettings()));
+        _menu.Items.Add(new ToolStripMenuItem("Save diagnostics…", null, (_, _) => SaveDiagnostics()));
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => ExitApplication()));
     }
+
+    /// <summary>
+    /// Writes the diagnostics dump and opens Explorer on it.
+    /// </summary>
+    /// <remarks>
+    /// The primary surface for the dump, and the reason it exists at all: the hardware this
+    /// project needs evidence from belongs to people who downloaded an exe, and a menu row is
+    /// the only instruction they can be given that does not begin "install the .NET SDK".
+    ///
+    /// Deliberately shares nothing with the running app but this click — no monitor, no
+    /// settings — so that the file produced here is byte-for-byte the one the command-line
+    /// form produces with nothing running. It blocks this thread for a second or two, most of
+    /// it opening HID handles. That is visible only as a tray icon that ignores a hover, since
+    /// the menu has already closed and there is no window to grey out.
+    /// </remarks>
+    static void SaveDiagnostics() => DiagnosticsFile.SaveAndReveal();
 
     void ShowSettings()
     {
