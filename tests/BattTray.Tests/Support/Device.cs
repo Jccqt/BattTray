@@ -9,7 +9,7 @@ namespace BattTray.Tests.Support;
 /// <see cref="Peripheral"/> is a record with required members, so every test would otherwise
 /// open with six lines of object initializer in which the one value that matters — the
 /// percentage — is indistinguishable from the five that do not. These name the interesting
-/// argument and default the rest to the ordinary case: connected, discharging, a real
+/// argument and default the rest to the ordinary case: connected, discharging, on Bluetooth, a real
 /// percentage rather than a band.
 /// </remarks>
 static class Device
@@ -26,12 +26,13 @@ static class Device
         string id = "dev",
         bool connected = true,
         bool stale = false,
-        ChargeState charge = ChargeState.Unknown) =>
+        ChargeState charge = ChargeState.Unknown,
+        Transport transport = Transport.Bluetooth) =>
         new()
         {
             Id = id,
             Name = id,
-            Transport = Transport.Bluetooth,
+            Transport = transport,
             BatteryPercent = percent,
             IsConnected = connected,
             IsStale = stale,

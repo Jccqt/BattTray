@@ -59,14 +59,19 @@ namespace BattTray.Devices;
 /// re-fires whenever a pad reconnects, which is the failure that class exists to avoid.</item>
 /// </list>
 ///
-/// A pad with a reading is reported as <see cref="Transport.Dongle"/>. XInput does not say
-/// which radio it is talking over, and the Bluetooth case above is genuinely filed under the
-/// wrong one — but that pad is already in the menu under its real transport from the other
-/// provider, and every reading only reachable here arrives over a dongle. The wired row is
-/// the exception and needs no guessing: WIRED is the one attachment XInput names outright, so
-/// that row is <see cref="Transport.Usb"/>. The provider-level
-/// <see cref="IPeripheralProvider.Transport"/> stays Dongle, being the transport this
-/// provider is about rather than a claim over each row it produces.
+/// No row here names a radio, because XInput never names one. A row with a reading is
+/// <see cref="Transport.Wireless"/>: the battery type establishes that the pad is running off
+/// its own cells and therefore not on a cable, and stops there — such a row is usually a
+/// dongle and is sometimes the Bluetooth pad above, which reaches XInput as readily as it
+/// publishes a battery node. A WIRED row is <see cref="Transport.Unknown"/>, weaker again,
+/// because WIRED is measured above to come back for a bus-powered receiver as well as for a
+/// cable: the same evidence that keeps that byte off <see cref="ChargeState.Charging"/>.
+///
+/// The two were filed as Dongle and Usb while the value was only ever grouped by, which cost
+/// nothing until the menu began saying it out loud — "(2.4 GHz)" and "(USB)" are both wrong
+/// about the controller this was developed against. The provider-level
+/// <see cref="IPeripheralProvider.Transport"/> stays Dongle, being the transport this provider
+/// is about rather than a claim over each row it produces.
 ///
 /// No cache, and no <see cref="IPeripheralProvider.InvalidateDeviceCache"/> override: there
 /// is nothing to enumerate and nothing to open, only four calls into a loaded DLL. Measured
@@ -128,9 +133,9 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
                 Transport = verdict.Transport,
                 Category = DeviceCategory.Gamepad,
 
-                // Both null on a USB-attached slot, which is a peripheral with no reading at
-                // all — the case every renderer already had to handle for a device that
-                // publishes no battery. See Peripheral.BatteryText.
+                // Both null on a slot that answered WIRED, which is a peripheral with no
+                // reading at all — the case every renderer already had to handle for a device
+                // that publishes no battery. See Peripheral.BatteryText.
                 BatteryPercent = verdict.Band?.Percent,
                 BatteryBand = verdict.Band?.Name,
                 ChargeState = verdict.Charge,
@@ -248,16 +253,16 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
         XInput.BatteryTypeDisconnected => null,
 
         // The level byte is thrown away here and only here. It reads FULL because the field
-        // has to hold something, and there is no battery it is about. Unknown rather than
-        // Charging: this byte is returned for a receiver as readily as for a cable, so it
-        // cannot support a claim about charge. Usb because both of those are USB
-        // attachments, which is the part it does settle.
-        XInput.BatteryTypeWired => new Verdict(null, ChargeState.Unknown, Transport.Usb),
+        // has to hold something, and there is no battery it is about. Unknown twice over, and
+        // for one reason: this byte is returned for a receiver as readily as for a cable, so
+        // it can support neither a claim about charge nor one about the link.
+        XInput.BatteryTypeWired => new Verdict(null, ChargeState.Unknown, Transport.Unknown),
 
         // A named battery type, or one XInput will not name: either way the pad is running
-        // off it, since anything on USB would have been reported as WIRED above.
+        // off it, since anything on USB would have been reported as WIRED above. Which is the
+        // whole of what the link claim rests on — cells rather than a cable, and no radio.
         _ => level < BandPercent.Length
-            ? new Verdict(new Band(BandPercent[level], BandNames[level]), ChargeState.Discharging, Transport.Dongle)
+            ? new Verdict(new Band(BandPercent[level], BandNames[level]), ChargeState.Discharging, Transport.Wireless)
             : null,
     };
 
@@ -282,8 +287,10 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
 
     /// <summary>
     /// Everything a slot's two bytes settle: the reading if there is one, how the pad is
-    /// powered, and how it is attached. A null <paramref name="Band"/> is a cable, which is
-    /// the one case here that produces a peripheral with nothing to report.
+    /// powered, and as much of the link as follows from that. A null <paramref name="Band"/> is
+    /// the WIRED answer, which is the one case here that produces a peripheral with nothing to
+    /// report — and the one whose <paramref name="Transport"/> is Unknown rather than Wireless,
+    /// since a cable and a bus-powered receiver answer alike.
     /// </summary>
     readonly record struct Verdict(Band? Band, ChargeState Charge, Transport Transport);
 }

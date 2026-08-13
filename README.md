@@ -36,6 +36,14 @@ The app has no resident window. It adds a tray icon; right-click it for the devi
 `Settings…`, `Save diagnostics…`, or `Exit`. Hovering shows the lowest connected level
 without opening anything. Only one instance runs at a time.
 
+A device row states what is known about the device and nothing more —
+`soundcore R60i NC — 80% · connected (Bluetooth)`: the reading, what the device is doing,
+and what it is doing it over. The link says as much as its source will support and no more:
+`(Bluetooth)`, `(2.4 GHz)` or `(USB)` where the radio is named, `(wireless)` for a controller
+that is plainly on batteries and will not say which radio, and nothing at all where even that
+is a guess. Both weaker cases are XInput — see
+[`WIRED` is not a cable](#wired-is-not-a-cable).
+
 The last line of the menu is the build you are running — `BattTray 0.1.0`, greyed out because
 there is nothing to click. With no window and no About box, the alternative was finding the
 exe on disk and opening its properties, which is a strange thing to ask of someone whose first
@@ -225,8 +233,8 @@ and the HID descriptor sweep came back empty — and it is deliberately narrow:
   battery is not knowable from here. **`WIRED` does not mean a cable** — see below.
 - **A pad on a radio reports one of four levels** — `EMPTY` / `LOW` / `MEDIUM` / `FULL` —
   and that is the whole scale, which is why such a row would read
-  `Gamepad 1 (XInput) — low · connected` rather than showing a percentage. No hardware here
-  has produced one; see below.
+  `Gamepad 1 (XInput) — low · connected (wireless)` rather than showing a percentage. No
+  hardware here has produced one; see below.
 
 `Windows.Gaming.Input`'s `TryGetBatteryReport()` looks like the better source and is not.
 Measured on the 8BitDo Ultimate 2C it returned `RemainingCapacityInMilliwattHours = 1000`
@@ -309,10 +317,18 @@ the alternative is an alert that re-fires on every reconnect.
 Bluetooth provider and once as a slot here, because such a pad reaches XInput *and*
 publishes a battery to the PnP tree. Nothing XInput exposes could correlate the two, so the
 duplicate is left legible rather than guessed away: one row carries a real name, the other
-is plainly a slot. For the same reason a row with a reading is reported as `Dongle` — XInput
-never says which radio it is talking over, but every reading only reachable here arrives over
-one. The wired row is the exception and needs no guess: it is `Usb`, `WIRED` being the one
-attachment XInput names outright.
+is plainly a slot.
+
+**No gamepad row names a radio**, because XInput never names one. A pad with a reading is
+`Wireless` and its row reads `(wireless)`: the battery type settles that the pad is running
+off its own cells rather than a cable, and stops there — such a row is usually a dongle and is
+sometimes that Bluetooth pad. A `WIRED` row is `Unknown` and names no link at all, since
+`WIRED` is measured below to come back for a bus-powered receiver as readily as for a cable.
+
+The two were once filed as `Dongle` and `Usb`, which cost nothing while the value was only
+ever grouped by; `(2.4 GHz)` and `(USB)` are both wrong about the controller on this desk once
+a row says them out loud. Only the provider-level transport stays `Dongle`, being what this
+provider is about rather than a claim over each row.
 
 ## Diagnostics
 

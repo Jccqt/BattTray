@@ -1,11 +1,31 @@
 namespace BattTray.Devices;
 
 /// <summary>How the peripheral is attached to the PC.</summary>
+/// <remarks>
+/// Named on the menu row, which makes this a claim about one device rather than a filing
+/// label for the list it sits in. A source that cannot tell a cable from a receiver says
+/// <see cref="Unknown"/> and its rows stay quiet about the link, rather than picking whichever
+/// of the two is wrong less often. <see cref="IPeripheralProvider.Transport"/> is the other
+/// thing and keeps its answer: the transport a provider is about.
+///
+/// The values are therefore graded by how much a source can support, not by how much a reader
+/// would like: <see cref="Wireless"/> sits between the two named radios and <see cref="Unknown"/>
+/// for a source that has established there is no cable and cannot say which radio replaced it.
+/// </remarks>
 internal enum Transport
 {
+    /// <summary>The source knows the device is there and not how it got here.</summary>
+    Unknown,
     Bluetooth,
     Usb,
     Dongle,
+
+    /// <summary>
+    /// On a radio, and which radio is not known. Weaker than <see cref="Dongle"/> and
+    /// <see cref="Bluetooth"/> on purpose: XInput settles that a pad is running off its own
+    /// battery without ever naming what it is talking over. See XInputGamepadProvider.
+    /// </summary>
+    Wireless,
 }
 
 /// <summary>Broad device category, used to pick a glyph and to sort the list.</summary>

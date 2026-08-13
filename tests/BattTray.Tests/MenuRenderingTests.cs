@@ -16,23 +16,23 @@ public class MenuRenderingTests
 {
     [Fact]
     public void AConnectedDeviceShowsItsPercentage() =>
-        Assert.Equal("dev — 80% · connected", TrayApplicationContext.DescribeDevice(Device.At(80)));
+        Assert.Equal("dev — 80% · connected (Bluetooth)", TrayApplicationContext.DescribeDevice(Device.At(80)));
 
     [Fact]
     public void ABandIsRenderedByName() =>
         Assert.Equal(
-            "pad — medium · connected",
+            "pad — medium · connected (Bluetooth)",
             TrayApplicationContext.DescribeDevice(Device.Band(percent: 60, name: "medium")));
 
     [Fact]
     public void ADeviceWithNoReadingSaysSoRatherThanShowingABlank()
     {
-        // "No battery reported" rather than an empty gap: a connected XInput slot on USB is
-        // present, working and silent about charge, and an omitted clause reads as though the
-        // reading had been forgotten.
+        // "No battery reported" rather than an empty gap: a connected XInput slot answering
+        // WIRED is present, working and silent about charge, and an omitted clause reads as
+        // though the reading had been forgotten.
         string row = TrayApplicationContext.DescribeDevice(Device.At(null));
 
-        Assert.Equal("dev — no battery reported · connected", row);
+        Assert.Equal("dev — no battery reported · connected (Bluetooth)", row);
     }
 
     [Fact]
@@ -40,8 +40,49 @@ public class MenuRenderingTests
         // The arm no provider has ever reached. Kept as the rendering a charge source would
         // land on, and pinned so it is still correct when one arrives.
         Assert.Equal(
-            "dev — 80% · charging",
+            "dev — 80% · charging (Bluetooth)",
             TrayApplicationContext.DescribeDevice(Device.At(80, charge: ChargeState.Charging)));
+
+    [Fact]
+    public void ADongleIsNamedByItsBand() =>
+        // Which of the two headsets this is, and why the mouse on the dongle is silent: the
+        // question the row could not answer before. Last on the row, being the least urgent of
+        // the three things there.
+        //
+        // Not a [Theory] over the enum, here or below: Transport is internal, and an
+        // InlineData of it would make this class's methods less accessible than they are.
+        Assert.Equal(
+            "dev — 80% · connected (2.4 GHz)",
+            TrayApplicationContext.DescribeDevice(Device.At(80, transport: Transport.Dongle)));
+
+    [Fact]
+    public void AWiredDeviceSaysUsb() =>
+        // No provider reports this today. It is the rendering a wired source would land on,
+        // pinned for the same reason the charging arm above is.
+        Assert.Equal(
+            "dev — 80% · connected (USB)",
+            TrayApplicationContext.DescribeDevice(Device.At(80, transport: Transport.Usb)));
+
+    [Fact]
+    public void ARadioNobodyWillNameIsStillARadio() =>
+        // An XInput pad with a reading. The battery type settles that it is running off its
+        // own cells and nothing more, so the row says that much and stops: "(2.4 GHz)" would
+        // be wrong for the Xbox pad that reaches XInput over Bluetooth.
+        Assert.Equal(
+            "pad — medium · connected (wireless)",
+            TrayApplicationContext.DescribeDevice(
+                Device.Band(percent: 60, name: "medium") with { Transport = Transport.Wireless }));
+
+    [Fact]
+    public void ASourceThatWillNotNameTheLinkLeavesItOff()
+    {
+        // An XInput slot answering WIRED, which is measured to come back for a bus-powered
+        // receiver as readily as for a cable. Not even "wireless" is available here, so the
+        // row keeps the two facts it has and mentions no link at all.
+        string row = TrayApplicationContext.DescribeDevice(Device.At(80, transport: Transport.Unknown));
+
+        Assert.Equal("dev — 80% · connected", row);
+    }
 
     [Fact]
     public void AStaleReadingCarriesItsAge()
@@ -53,7 +94,7 @@ public class MenuRenderingTests
         // age. The clause used to hang off "disconnected", which is why a present device with
         // an old reading had nowhere to put it.
         Assert.Equal(
-            "dev — 80% (stale, last seen 5h ago) · disconnected",
+            "dev — 80% (stale, last seen 5h ago) · disconnected (Bluetooth)",
             TrayApplicationContext.DescribeDevice(device));
     }
 
@@ -64,7 +105,7 @@ public class MenuRenderingTests
         // does not have.
         var device = Device.At(80, connected: false, stale: true);
 
-        Assert.Equal("dev — 80% (stale) · disconnected", TrayApplicationContext.DescribeDevice(device));
+        Assert.Equal("dev — 80% (stale) · disconnected (Bluetooth)", TrayApplicationContext.DescribeDevice(device));
     }
 
     [Fact]
@@ -75,7 +116,7 @@ public class MenuRenderingTests
         // wireless session. Both facts, neither dropped.
         var device = Device.At(87, stale: true, charge: ChargeState.Charging);
 
-        Assert.Equal("dev — 87% (stale) · charging", TrayApplicationContext.DescribeDevice(device));
+        Assert.Equal("dev — 87% (stale) · charging (Bluetooth)", TrayApplicationContext.DescribeDevice(device));
     }
 
     [Fact]
@@ -85,21 +126,21 @@ public class MenuRenderingTests
         // link drops is quoted plainly; only the age clause is missing, because there is none.
         var device = Device.At(80, connected: false);
 
-        Assert.Equal("dev — 80% · disconnected", TrayApplicationContext.DescribeDevice(device));
+        Assert.Equal("dev — 80% · disconnected (Bluetooth)", TrayApplicationContext.DescribeDevice(device));
     }
 
     [Fact]
     public void ABandIsStillNamedWhenItIsStale() =>
         // The stand-in number must not surface just because the row grew a clause.
         Assert.Equal(
-            "pad — medium (stale) · connected",
+            "pad — medium (stale) · connected (Bluetooth)",
             TrayApplicationContext.DescribeDevice(Device.Band(percent: 60, name: "medium") with { IsStale = true }));
 
     [Fact]
     public void ADeviceWithNoReadingIsNeverCalledStale() =>
         // Not "no battery reported (stale)": there is no number to have aged.
         Assert.Equal(
-            "dev — no battery reported · disconnected",
+            "dev — no battery reported · disconnected (Bluetooth)",
             TrayApplicationContext.DescribeDevice(Device.At(null, connected: false, stale: true)));
 
     [Fact]
@@ -109,7 +150,7 @@ public class MenuRenderingTests
         // about a link, and the link is gone. The number keeps its own clause either way.
         var device = Device.At(80, connected: false, stale: true, charge: ChargeState.Charging);
 
-        Assert.Equal("dev — 80% (stale) · disconnected", TrayApplicationContext.DescribeDevice(device));
+        Assert.Equal("dev — 80% (stale) · disconnected (Bluetooth)", TrayApplicationContext.DescribeDevice(device));
     }
 
     [Fact]

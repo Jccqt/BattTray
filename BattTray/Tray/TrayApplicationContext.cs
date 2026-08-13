@@ -517,12 +517,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// not — so it is kept as the rendering a charge source would land on rather than as
     /// something the menu has shown.
     ///
-    /// The row states two facts and states each once: what the reading is, then what the
-    /// device is doing. The age belongs to the first clause because it is the reading's age
-    /// and not the link's — a device can be present and carrying a number from an earlier
-    /// session, and that row has to read "87% (stale) · charging" rather than picking one of
-    /// the two halves to believe. Which is why nothing here asks about connectedness to find
-    /// out whether a number is current: see <see cref="Peripheral.IsStale"/>.
+    /// The row states three facts and states each once: what the reading is, what the device
+    /// is doing, and what it is doing it over. The age belongs to the first clause because it
+    /// is the reading's age and not the link's — a device can be present and carrying a number
+    /// from an earlier session, and that row has to read "87% (stale) · charging" rather than
+    /// picking one of the two halves to believe. Which is why nothing here asks about
+    /// connectedness to find out whether a number is current: see
+    /// <see cref="Peripheral.IsStale"/>.
     /// </remarks>
     internal static string DescribeDevice(Peripheral device)
     {
@@ -541,8 +542,41 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _ => "connected",
         };
 
-        return $"{device.Name} — {battery} · {status}";
+        return $"{device.Name} — {battery} · {status}{DescribeTransport(device.Transport)}";
     }
+
+    /// <summary>
+    /// The link on the end of a row — " (Bluetooth)" — or nothing at all where the provider
+    /// would not say which link it is.
+    /// </summary>
+    /// <remarks>
+    /// Parenthesised and last because it is the least urgent of the three facts on the row: it
+    /// answers "which of my two headsets is this" and "why is the mouse not reporting on the
+    /// dongle", neither of which should come before the charge.
+    ///
+    /// The clause says exactly as much as the source will support, which is why there are two
+    /// weak renderings under the two named radios. "wireless" is an XInput pad with a reading:
+    /// running off its own cells, and on a radio XInput declines to name, so "(2.4 GHz)" would
+    /// be wrong whenever that pad is the Xbox controller sitting on Bluetooth. Nothing at all
+    /// is an XInput pad answering WIRED, where a cable and a bus-powered receiver produce the
+    /// same bytes — see XInputGamepadProvider — and an empty clause reads as a row that does
+    /// not mention the link, which is what is meant.
+    ///
+    /// Lower case, unlike the other three: they are the names of things and this is an
+    /// adjective, the same reason the band names are lower case.
+    ///
+    /// <see cref="Transport.Usb"/> is spelled out although nothing sets it today: it is the
+    /// rendering a wired source would land on, kept beside the ones that are reachable rather
+    /// than left for whoever writes that provider to invent.
+    /// </remarks>
+    internal static string DescribeTransport(Transport transport) => transport switch
+    {
+        Transport.Bluetooth => " (Bluetooth)",
+        Transport.Usb => " (USB)",
+        Transport.Dongle => " (2.4 GHz)",
+        Transport.Wireless => " (wireless)",
+        _ => string.Empty,
+    };
 
     /// <summary>Renders how long ago a reading was taken, e.g. ", last seen 4d ago".</summary>
     internal static string FormatAge(DateTime? updatedUtc)
