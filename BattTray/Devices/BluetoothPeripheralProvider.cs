@@ -522,7 +522,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
             ?? ConfigManager.GetString(devInst, DevPropKeys.DeviceDesc));
 
     /// <summary>Strips the Bluetooth profile suffixes Windows appends to child node names.</summary>
-    static string? CleanNodeName(string? name)
+    internal static string? CleanNodeName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name))
             return null;
@@ -568,7 +568,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     }
 
     /// <summary>Maps a Bluetooth class-of-device word to a display category.</summary>
-    static DeviceCategory Categorize(uint classOfDevice)
+    internal static DeviceCategory Categorize(uint classOfDevice)
     {
         uint major = (classOfDevice >> 8) & 0x1F;
         uint minor = (classOfDevice >> 2) & 0x3F;
@@ -627,7 +627,7 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
     /// ids present on the development machine.
     /// </summary>
     [GeneratedRegex(@"[_&\\]([0-9A-Fa-f]{12})(?=[_&\\]|$)", RegexOptions.IgnoreCase)]
-    private static partial Regex AddressInInstanceId();
+    internal static partial Regex AddressInInstanceId();
 
     [GeneratedRegex(@"\s+(Hands-Free(\s+AG)?|Avrcp Transport|AG|Stereo|Audio)$", RegexOptions.IgnoreCase)]
     private static partial Regex ProfileSuffix();

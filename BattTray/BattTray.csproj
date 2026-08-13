@@ -33,6 +33,7 @@
     <!-- The diagnostics harness drives the real providers rather than a copy of them, which
          means reaching the internal device types. Nothing here is public API. -->
     <InternalsVisibleTo Include="BattTray.Diagnostics" />
+    <InternalsVisibleTo Include="BattTray.Tests" />
   </ItemGroup>
 
   <!-- The app idles in the tray, so favour a small, quiet footprint over throughput. -->

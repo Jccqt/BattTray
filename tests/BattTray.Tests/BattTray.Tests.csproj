@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Windows-flavoured, and WinForms enabled, only because the assembly under test is:
+         nothing here touches a control. The rules worth testing are pure, which is the
+         reason they are the ones tested. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>BattTray.Tests</RootNamespace>
+
+    <!-- The app sets this, and the tests assert on strings it produces. Left off, a machine
+         with a non-invariant culture would format numbers differently here than in the app
+         and fail tests that are right. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The real types, as the diagnostics harness does. Everything under test is internal,
+         so this pairs with InternalsVisibleTo in BattTray.csproj. -->
+    <ProjectReference Include="..\..\BattTray\BattTray.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

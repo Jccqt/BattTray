@@ -116,7 +116,13 @@ internal static class AutoStart
     static string CommandFor(string path) => $"\"{path}\" {StartupSwitch}";
 
     /// <summary>The executable a stored command launches, without quotes or arguments.</summary>
-    static string ExecutableFrom(string command)
+    /// <remarks>
+    /// Internal rather than private so the tests can reach it. It is the one piece of this
+    /// class that is pure — everything around it is the registry — and it decides whether the
+    /// checkbox agrees with what happens at login, so it is worth pinning down without a
+    /// machine's Run key in the loop.
+    /// </remarks>
+    internal static string ExecutableFrom(string command)
     {
         string trimmed = command.Trim();
         if (!trimmed.StartsWith('"'))

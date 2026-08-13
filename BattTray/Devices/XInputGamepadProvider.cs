@@ -99,7 +99,7 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
     /// and re-arms. The exception is a pad that alerted at EMPTY against a 10% threshold,
     /// which needs 25 to re-arm and so stays latched through LOW until it reaches MEDIUM.
     /// </remarks>
-    static readonly int[] BandPercent = [5, 20, 60, 100];
+    internal static readonly int[] BandPercent = [5, 20, 60, 100];
 
     /// <summary>
     /// What each level is called, in level order. Rendered verbatim and mid-sentence — "is

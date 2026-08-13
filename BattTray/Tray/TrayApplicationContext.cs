@@ -457,7 +457,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// not — so it is kept as the rendering a charge source would land on rather than as
     /// something the menu has shown.
     /// </remarks>
-    static string DescribeDevice(Peripheral device)
+    internal static string DescribeDevice(Peripheral device)
     {
         string battery = device.BatteryText ?? "no battery reported";
 
@@ -472,7 +472,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>Renders how long ago a cached reading was taken, e.g. " · 4d ago".</summary>
-    static string FormatAge(DateTime? updatedUtc)
+    internal static string FormatAge(DateTime? updatedUtc)
     {
         if (updatedUtc is not { } timestamp)
             return string.Empty;

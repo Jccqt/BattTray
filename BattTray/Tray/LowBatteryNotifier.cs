@@ -35,7 +35,7 @@ internal sealed class LowBatteryNotifier(Action<string, string> showAlert)
     /// numbers have to be spaced so that climbing a band clears it. See the mapping in
     /// XInputGamepadProvider, where four levels have to survive this rule.
     /// </remarks>
-    const int ReArmMargin = 15;
+    internal const int ReArmMargin = 15;
 
     readonly Action<string, string> _showAlert = showAlert;
 
