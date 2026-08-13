@@ -341,21 +341,29 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         // Two questions, and they used to be one: what is here, and what will talk. A device
         // can be connected and silent — an XInput slot answering BATTERY_TYPE_WIRED, a
-        // headset that publishes no battery node — and folding that into "none reporting"
-        // told the user nothing was there while a controller sat plainly connected.
+        // headset that publishes no battery node, one carrying nothing but a number from an
+        // earlier session — and folding that into "none reporting" told the user nothing was
+        // there while a controller sat plainly connected.
         var live = devices.Where(d => d.IsConnected).ToList();
-        var reporting = live.Where(d => d.BatteryPercent is not null).ToList();
+
+        // Stale readings are left out, matching PeripheralMonitor.LowestConnected: the two have
+        // to agree on what counts as a reading, or the count in the sentence and the device
+        // named in it would be drawn from different lists.
+        var reporting = live.Where(d => !d.IsStale && d.BatteryPercent is not null).ToList();
 
         string text = (live.Count, reporting.Count) switch
         {
-            // Everything on show is a leftover reading. Worth saying once here, because it
-            // is the one thing every row in the menu below has in common.
+            // Nothing is here to be reporting anything, whatever the menu below is showing.
             (0, _) => $"BattTray — {devices.Count} device(s), none connected",
 
             // Present and silent. Naming it beats counting: the complaint this answers is
             // "my controller is right there", and the answer is that it is seen and will
             // not say. The menu row alongside puts it the same way.
-            (1, 0) => $"{live[0].Name}: no battery reported",
+            (1, 0) => $"{live[0].Name}: {DescribeSilence(live[0])}",
+
+            // Past one device there is no name to hang the distinction on, and a sentence
+            // qualifying a count says less than the count does. Whichever of them has a
+            // leftover is a click away, spelled out on its own row.
             (_, 0) => $"{live.Count} devices connected, none reporting a level",
 
             (_, 1) => $"{reporting[0].Name}: {reporting[0].BatteryText}",
@@ -369,6 +377,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         return text.Length <= MaxTooltipLength ? text : text[..(MaxTooltipLength - 1)] + "…";
     }
+
+    /// <summary>
+    /// Why a connected device contributed no reading: it publishes none at all, or the only
+    /// number it has is a leftover.
+    /// </summary>
+    /// <remarks>
+    /// The two are told apart because the menu row beside this one is not silent about the
+    /// second — it reads "87% (stale)" — and a tooltip answering "no battery reported" for that
+    /// device would contradict, one click apart, a row that plainly has a number on it. What is
+    /// being denied here is a reading about now, which is the only kind the tooltip quotes.
+    /// </remarks>
+    static string DescribeSilence(Peripheral device) =>
+        device.BatteryText is null ? "no battery reported" : "no reading about now";
 
     void RebuildMenu()
     {

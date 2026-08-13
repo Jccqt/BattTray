@@ -141,6 +141,20 @@ public class PeripheralMonitorTests
     }
 
     [Fact]
+    public void TheTooltipIgnoresALeftoverReadingFromADeviceThatIsStillHere()
+    {
+        var monitor = Monitor(new Fake(
+            Transport.Bluetooth,
+            Device.At(5, id: "pad", stale: true),
+            Device.At(40, id: "headset")));
+
+        // Connectedness was doing this job while staleness meant it, which held only for as
+        // long as no source could be present and out of date at once. The pad is here and its
+        // number is not about now, so it is not the most urgent reading on the machine.
+        Assert.Equal("headset", monitor.LowestConnected?.Id);
+    }
+
+    [Fact]
     public void TheTooltipIgnoresConnectedDevicesWithNoReading()
     {
         var monitor = Monitor(new Fake(

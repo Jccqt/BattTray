@@ -21,10 +21,17 @@ public class TooltipRenderingTests
     /// <summary>The cap in TrayApplicationContext, restated so the boundary cases can do sums.</summary>
     const int MaxTooltipLength = 127;
 
+    /// <summary>
+    /// The tooltip for a set of devices, with the lowest picked exactly as
+    /// PeripheralMonitor.LowestConnected picks it — stale readings included in the list and
+    /// excluded from the contest, since the two have to agree about what counts as a reading.
+    /// </summary>
     static string Tooltip(params Peripheral[] devices) =>
         TrayApplicationContext.BuildTooltip(
             devices,
-            devices.Where(d => d.IsConnected && d.BatteryPercent is not null).MinBy(d => d.BatteryPercent));
+            devices
+                .Where(d => d.IsConnected && !d.IsStale && d.BatteryPercent is not null)
+                .MinBy(d => d.BatteryPercent));
 
     [Fact]
     public void NothingPairedSaysSo() =>
@@ -103,6 +110,40 @@ public class TooltipRenderingTests
 
         Assert.Equal("mouse: 60%", tooltip);
     }
+
+    [Fact]
+    public void APresentDeviceCarryingOnlyALeftoverNumberCannotBeTheLowest()
+    {
+        // The case connectedness alone could not catch, and the reason the filter here is about
+        // the number rather than the link: a pad on a cable holding 5% from its last wireless
+        // session is not the most urgent thing on this machine, and quoting it would hide the
+        // headset that genuinely is — behind a figure the menu row marks "(stale)" and this
+        // line has nowhere to.
+        string tooltip = Tooltip(
+            Device.At(5, id: "pad", stale: true),
+            Device.At(40, id: "headset"));
+
+        Assert.Equal("headset: 40%", tooltip);
+    }
+
+    [Fact]
+    public void APresentDeviceWithOnlyALeftoverNumberIsNotCalledSilent()
+    {
+        // Its row a click below reads "87% (stale)", so "no battery reported" here would have
+        // the two surfaces contradicting each other about whether a number exists. What the
+        // tooltip is short of is a reading about now, and that is what it says.
+        string tooltip = Tooltip(Device.At(87, id: "pad", stale: true));
+
+        Assert.Equal("pad: no reading about now", tooltip);
+    }
+
+    [Fact]
+    public void SeveralPresentDevicesWithNothingCurrentAreCountedLikeAnyOtherSilence() =>
+        // Past one device there is no name to hang the distinction on, so the leftover and the
+        // device that never reports are counted together. Which is which is on their rows.
+        Assert.Equal(
+            "2 devices connected, none reporting a level",
+            Tooltip(Device.At(87, id: "pad", stale: true), Device.At(null, id: "headset")));
 
     [Fact]
     public void ABandIsNamedRatherThanShowingItsStandInNumber() =>

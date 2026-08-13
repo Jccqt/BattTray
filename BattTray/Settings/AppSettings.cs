@@ -34,8 +34,15 @@ internal sealed record AppSettings
     public int LowBatteryThreshold { get; init; } = 20;
 
     /// <summary>
-    /// Hides devices that are only showing a cached reading from an earlier session.
+    /// Hides devices that are not connected, whatever number they are still carrying.
     /// </summary>
+    /// <remarks>
+    /// The link, as the checkbox says, and not the age of the reading — which is what this
+    /// described while the two were one fact. A device that has gone away is what the user
+    /// asked not to see; one that is present while its number is a leftover keeps its row and
+    /// says "(stale)" on it, because it is still here to be looked at. See
+    /// <see cref="Devices.Peripheral.IsStale"/>.
+    /// </remarks>
     public bool HideDisconnected { get; init; }
 
     public int RefreshIntervalSeconds { get; init; } = 60;
