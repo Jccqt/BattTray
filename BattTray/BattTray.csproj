@@ -8,7 +8,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>BattTray</RootNamespace>
     <AssemblyName>BattTray</AssemblyName>
-    <ApplicationIcon>Assets\batttray-black.ico</ApplicationIcon>
+    <!-- The file icon, not the tray icon, and deliberately a third piece of artwork. The tray
+         swaps between the black and white glyphs to contrast whatever the taskbar is doing;
+         Explorer offers no such swap, so a downloaded exe drawn as a bare black glyph very
+         nearly vanishes against dark mode. This one carries its own background. Built from
+         the black glyph by tools/icons/Build-AppIcon.ps1, so it cannot drift from it. -->
+    <ApplicationIcon>Assets\batttray-app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <!-- Shown on the exe's Properties > Details tab, which is the only place a user who
