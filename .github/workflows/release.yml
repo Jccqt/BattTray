@@ -33,6 +33,11 @@ jobs:
       - name: Build
         run: dotnet build BattTray.slnx --configuration Release
 
+      # Between the build and the publish on purpose. A tag is the one push nobody gets to
+      # re-do quietly, so the tests run before an exe exists to attach rather than after.
+      - name: Test
+        run: dotnet test tests/BattTray.Tests/BattTray.Tests.csproj --configuration Release --no-build
+
       - name: Publish single-file exe
         run: dotnet publish BattTray/BattTray.csproj -p:PublishProfile=win-x64
 

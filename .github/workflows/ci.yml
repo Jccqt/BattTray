@@ -1,0 +1,35 @@
+name: CI
+
+# The tests exist to catch a rule being broken by someone who did not know it was a rule,
+# which only works if they run without being remembered. Every push and every pull request,
+# on the branch people actually work on.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Warnings are not errors here. The app targets a Windows-only framework and the
+      # analyzers have opinions about it that the code answers in comments rather than in
+      # suppressions; failing the build on those would train people to add suppressions.
+      - name: Build
+        run: dotnet build BattTray.slnx --configuration Release
+
+      # Windows-hosted because the assembly under test is net10.0-windows, not because any
+      # test touches the machine: nothing here reads a registry key, opens a radio or asks
+      # XInput anything. That is deliberate — the hardware-facing half is covered by
+      # tools/BattTray.Diagnostics, which needs the hardware in front of it and so cannot
+      # be a CI job.
+      - name: Test
+        run: dotnet test tests/BattTray.Tests/BattTray.Tests.csproj --configuration Release --no-build --verbosity normal
