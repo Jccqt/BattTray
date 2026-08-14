@@ -28,6 +28,8 @@ if (args.Contains("--help") || args.Contains("-h"))
           --all              With --probe, dump everything rather than peripheral-looking ones.
           --probe-hid        Sweep every HID interface for battery usages in its report
                              descriptor, which no device property exposes, and exit.
+          --probe-gatt       Ask every bonded LE device what GATT services it publishes, read
+                             back what sits under 0x180F, and exit.
           --interval <sec>   Seconds between scans while watching (default 5).
           --log <path>       Also append everything to this file.
           --help             This message.
@@ -61,6 +63,19 @@ if (args.Contains("--probe"))
 if (args.Contains("--probe-hid"))
 {
     HidProbe.Run(Write);
+    log?.Dispose();
+    return 0;
+}
+
+// The third of the three, and the only one that asks a device something rather than asking
+// Windows about it: a GATT characteristic is state behind an ATT handle, invisible to a
+// property sweep and to a report descriptor alike. It is also the only one whose answer can
+// change while nothing about the machine does, which is why it stands alone — a value read
+// over a live link belongs beside the moment it was taken, not buried in a megabyte of
+// property bytes swept minutes earlier.
+if (args.Contains("--probe-gatt"))
+{
+    GattProbe.Run(Write);
     log?.Dispose();
     return 0;
 }

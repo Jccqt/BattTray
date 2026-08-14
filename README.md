@@ -157,7 +157,13 @@ be described. Nothing on this transport produces one yet.
 
 **Charging state is not available over Bluetooth.** A full dump of every device property
 on a battery-reporting node showed no charging flag — Bluetooth Classic simply does not
-expose one. `ChargeState` is therefore tri-state (`Unknown` / `Discharging` / `Charging`)
+expose one. The BLE side has since been asked directly rather than through its properties,
+which is a different question and now has its own answer: the one bonded device here with a
+GATT Battery Service publishes `0x2A19` Battery Level and nothing else, with no `0x2BED`
+Battery Level Status — the characteristic that would have carried charge state. Read live over
+the air it answers 93% while the property says 91%, so the two are the same reading at
+different ages rather than two sources. See [`--probe-gatt`](#probing-for-a-charge-state-in-gatt).
+`ChargeState` is therefore tri-state (`Unknown` / `Discharging` / `Charging`)
 and Bluetooth always reports `Unknown`, because "not charging" would be a guess. No other
 source fills it in either — XInput looked as though it would and does not, for reasons worth
 reading before trying again: [`WIRED` is not a cable](#wired-is-not-a-cable).
@@ -277,6 +283,7 @@ Two consequences follow, and both are about this hardware rather than about the 
 
 **Nothing sets `Charging`.** Bluetooth cannot (no charging flag exists on the property), HID
 cannot ([no descriptor here declares one](#probing-for-a-battery-in-hid-report-descriptors)),
+GATT cannot ([nothing bonded here publishes `0x2BED`](#probing-for-a-charge-state-in-gatt)),
 and XInput's one candidate byte turned out to mean something else. The rendering in
 `DescribeDevice` and the latch release in `LowBatteryNotifier` are both kept, and both are
 unreached — they are the shape a charge source would plug into, not behaviour the app has
@@ -340,11 +347,11 @@ no console — which is the entire point: the hardware this project cannot buy b
 people who downloaded a single exe, and a request that starts "install the .NET SDK" is a
 request not to answer.
 
-The file carries all three dumps described below — the providers' raw evidence, the device
-property sweep and the HID sweep — under a header naming the build, the Windows version and
-the moment it was taken. A pasted dump with no build number is a bug report about an unknown
-binary. Expect around 1.5 MB of it, which is why it says to attach the file rather than paste
-its contents.
+The file carries all four dumps described below — the providers' raw evidence, the device
+property sweep, the HID sweep and the GATT sweep — under a header naming the build, the
+Windows version and the moment it was taken. A pasted dump with no build number is a bug
+report about an unknown binary. Expect around 1.5 MB of it, which is why it says to attach
+the file rather than paste its contents.
 
 The build in that header and the one in the menu's last row come from the same reader, so a
 dump cannot name a different binary from the one whose version was quoted in the issue above
@@ -358,7 +365,7 @@ BattTray.exe --diagnostics           # to %TEMP%, then revealed in Explorer
 BattTray.exe --diagnostics dump.txt  # to that path, no window; the exit code is the answer
 ```
 
-The flag is handled before the single-instance check, because none of the three dumps needs
+The flag is handled before the single-instance check, because none of the four dumps needs
 the tray: the providers are constructed on the spot and the probes talk to Windows rather
 than to the app. So a dump is neither refused because a copy is already running — which is
 exactly when you want one — nor does it raise a second tray icon on its way out. A named path
@@ -369,7 +376,7 @@ not need to be shown where it went.
 
 `tools/BattTray.Diagnostics` is an accuracy harness. It drives the real providers through
 the real `IPeripheralProvider` seam rather than reimplementing them — a harness that
-duplicates what it is checking can only ever confirm itself. The two probes below and the
+duplicates what it is checking can only ever confirm itself. The three probes below and the
 evidence dump live in `BattTray/Diagnostics` for the same reason, so the harness and the
 menu row run the same code rather than two copies of it; what the harness adds is watch
 mode, `--log`, and `--all`.
@@ -469,6 +476,10 @@ pages. That is a fact about what is attached, not about the approach, which is t
 flag exists — the day a mouse, headset or controller that does report over HID is plugged in,
 the answer is one command away.
 
+It is also not the last place left to look. A HID descriptor and a device property are both
+things Windows publishes *about* a device; asking the device itself is a third question, and
+[`--probe-gatt`](#probing-for-a-charge-state-in-gatt) below is where it is asked.
+
 The sweep costs ~165 ms for the 20 interfaces above, nearly all of it in opening handles and
 parsing descriptors rather than in enumeration (~5 ms) — the cost tracks how many devices are
 attached, so it is the ratio rather than either figure that carries. That is fine on demand
@@ -478,6 +489,80 @@ diagnostics tool and why a HID provider will need a cheaper shape than a full sw
 shape is a cache invalidated by device-change events rather than rebuilt per poll — see
 [Design notes](#device-change-notifications-and-the-poll-behind-them), where the seam for
 it already exists.
+
+### Probing for a charge state in GATT
+
+`--probe-gatt` is the third sweep, and the only one that asks a *device* something rather than
+asking Windows about it. A GATT characteristic is not a device property and not a HID usage —
+it is state behind an ATT handle — so both sweeps above are blind to it by construction. It
+exists for one characteristic in particular: `0x2BED` Battery Level Status, added in Battery
+Service 1.1, which carries charge state, charging type and fault reason in a single 16-bit
+field. Every other charging route named in this file has been closed by measurement, and this
+was the one nobody had checked.
+
+```bash
+dotnet run --project tools/BattTray.Diagnostics -- --probe-gatt --log gatt.txt
+```
+
+It groups every LE interface by radio address and prints, per device, its link evidence and
+then every service and characteristic behind each interface, with the properties (`read` /
+`notify` / `write` …) each one declares. Where a readable characteristic sits under `0x180F` it
+is read back on the spot, raw bytes first and the decode under them. Interfaces that refuse to
+open or to give up a service table are reported with their error rather than skipped: unread is
+a different answer from no battery.
+
+**Two interface classes are swept, and both are needed.** This was the one thing that had to be
+measured rather than assumed. `GUID_BLUETOOTHLE_DEVICE_INTERFACE` sits on the `BTHLE\Dev_*`
+parent and lists every service the device holds; `GUID_BLUETOOTH_GATT_SERVICE_DEVICE_INTERFACE`
+sits on each `BTHLEDevice\{uuid}_*` child and lists only its own. Reading a value is not the
+same operation as listing one: through the device-level handle
+`BluetoothGATTGetCharacteristicValue` fails with `ERROR_INVALID_FUNCTION` however live the link
+is, while the same characteristic through its own service handle answers immediately. Either
+class alone gives a wrong answer — the device class reads nothing, and the service class cannot
+show that a device publishes *no* Battery Service, since a service with no node has no
+interface to be found under. Handles are opened with `dwDesiredAccess = 0` as in `--probe-hid`;
+that is enough to list, and the value read is refused, so it is retried once through a
+`GENERIC_READ` handle and the retry is reported where it happened.
+
+Two things are worth knowing about the reads themselves. **Where the value came from is printed
+beside it** — a device with a live link is read with `FORCE_READ_FROM_DEVICE`, one that is
+bonded but away is read with `FORCE_READ_FROM_CACHE` rather than woken, and if the chosen source
+fails the other is tried once and both attempts are shown. And **an empty cache answers
+`HRESULT 0x80070001`**, "Incorrect function", which reads like a broken call and means the stack
+has simply never held that value; the probe says so in the line rather than leaving it to be
+looked up. A characteristic is only crossed off once some interface has read it *successfully*,
+so a refusal on one handle cannot consume the one attempt a working handle would have had.
+
+On the development machine the answer is **no**: two bonded LE devices, one of which — the
+8BitDo Ultimate 2C — publishes `0x180F`, and the whole of its Battery Service is a single
+`0x2A19` Battery Level. No `0x2BED` anywhere. So GATT carries no charging state on this
+hardware, which closes the last route named for it, by measurement rather than by assumption.
+
+The percentage it *does* carry turns out not to be identical to the property, which is worth
+recording. Read live over BLE while connected, `0x2A19` came back `5D` — 93% — while the node
+property the provider reads held `5B`, 91%, with `battery updated` frozen at a timestamp
+minutes old. Windows' copy is a snapshot refreshed on its own schedule; the GATT read is
+current. That is freshness rather than a new fact, and a poor trade against holding a
+connection open, but it is the reason this section does not say the two are the same number.
+
+The sweep costs ~250 ms in total, split ~67 ms enumerating (most of it reading the `BDIF_*`
+flag word off the Bluetooth enumerators), ~125 ms opening 13 handles and reading service and
+characteristic tables, and ~55 ms on the value reads. Only the last figure touches the radio:
+services and characteristics come out of the attribute table Windows already holds for a bonded
+device. That is cheap enough to ship, so it is in the `Save diagnostics…` file too.
+
+One interface refuses on every run: the pad's HID-over-GATT service (`0x1812`), held
+exclusively by the HID class driver, fails to open with `GetLastError 31`. It is reported, and
+the verdict then says the thing that keeps the caveat honest — the same device answered through
+its `[device]` interface, which lists all of its services, so no service is hidden by that
+refusal; what is unknown is only what that handle would have read.
+
+`Windows.Devices.Bluetooth.GenericAttributeProfile` is the documented way to read GATT and is
+not what this uses. The WinRT projection needs a Windows SDK version pinned into the target
+framework, which every project in the solution would inherit for the sake of one diagnostics
+sweep — the same trade [refused for enumeration](#design-notes) — while `BluetoothAPIs.dll` is
+a system DLL whose exports a single-file publish carries for free. That was verified rather
+than assumed: the published exe produces the same GATT section as a `dotnet run`.
 
 ## Design notes
 

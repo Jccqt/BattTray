@@ -52,6 +52,7 @@ internal static class DevPropType
 internal static class DevPropKeys
 {
     static readonly Guid DeviceGuid = new("a45c254e-df1c-4efd-8020-67d146a850e0");
+    static readonly Guid DeviceInstanceGuid = new("78c34fc8-104a-4aca-9ea4-524d52996e57");
     static readonly Guid DeviceExGuid = new("540b947e-8b40-45bc-a8a2-6a0b894cbda2");
     static readonly Guid ContainerGuid = new("8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c");
     static readonly Guid BluetoothGuid = new("2bd67d8b-8beb-48d5-87e0-6cda3428040a");
@@ -67,6 +68,13 @@ internal static class DevPropKeys
     public static readonly DevPropKey FriendlyName = new(DeviceGuid, 14);
     public static readonly DevPropKey ContainerId = new(ContainerGuid, 2);
     public static readonly DevPropKey IsPresent = new(DeviceExGuid, 5);
+
+    /// <summary>
+    /// DEVPKEY_Device_InstanceId. Only interfaces are asked for it: it is the one property that
+    /// names the node behind a device interface, and an interface path names a driver and a
+    /// class GUID and nothing that can be looked up.
+    /// </summary>
+    public static readonly DevPropKey InstanceId = new(DeviceInstanceGuid, 256);
 
     public static readonly DevPropKey BluetoothDeviceAddress = new(BluetoothGuid, 1);
 

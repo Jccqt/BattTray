@@ -7,7 +7,8 @@ namespace BattTray.Diagnostics;
 /// <summary>
 /// Everything the app can find out about the peripherals attached to this machine, in the
 /// order someone reading a bug report wants it: what BattTray's own providers read, then what
-/// Windows publishes as device properties, then what the HID report descriptors declare.
+/// Windows publishes as device properties, then what the HID report descriptors declare, then
+/// what the bonded LE devices answer over GATT.
 /// </summary>
 /// <remarks>
 /// The reason this lives in the shipped exe rather than only in the harness is that the people
@@ -52,6 +53,19 @@ internal static class DiagnosticsDump
 
         write(string.Empty);
         HidProbe.Run(write);
+
+        // Included because it is the cheapest of the three by a wide margin — ~250 ms against
+        // the property sweep's ~1.8 s on this machine, and a few dozen lines against its
+        // megabyte — and because it is the only one that can answer a charging question, which
+        // is the question an issue about a controller is most likely to be about.
+        //
+        // It is also the only sweep here that talks to hardware rather than to Windows, and
+        // that was the thing to check before adding it: the value reads cost ~50 ms across
+        // every battery characteristic on the machine, and a device with no live link is read
+        // from the stack's cache rather than woken. So a dump cannot connect a peripheral that
+        // was sitting idle, and cannot hang waiting for one that is switched off.
+        write(string.Empty);
+        GattProbe.Run(write);
     }
 
     /// <summary>
@@ -79,7 +93,7 @@ internal static class DiagnosticsDump
     /// What the person who clicked "Save diagnostics…" is supposed to do with the file.
     /// </summary>
     /// <remarks>
-    /// Attach rather than paste, because the two sweeps below run to well over a megabyte on an
+    /// Attach rather than paste, because the sweeps below run to well over a megabyte on an
     /// ordinary machine and a GitHub issue body holds 64 KB. Saying so here is cheaper than
     /// letting someone find out by pasting.
     ///

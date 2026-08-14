@@ -18,8 +18,11 @@ namespace BattTray.Devices;
 /// </list>
 /// Charging state is deliberately left <see cref="ChargeState.Unknown"/>: Bluetooth
 /// Classic exposes no charging property at all, so claiming "discharging" would be a
-/// guess. BLE devices implementing the newer Battery Level Status characteristic could
-/// report it, but that requires holding a GATT connection open.
+/// guess. The newer Battery Level Status characteristic (0x2BED) would report it, and
+/// <see cref="BattTray.Diagnostics.GattProbe"/> was written to find out whether anything here
+/// publishes one. Nothing does — the only bonded device with a GATT Battery Service holds a
+/// bare 0x2A19 Battery Level — so the question is not what it would cost to hold a GATT
+/// connection open, but that there is nothing on the other end of one to read.
 /// </remarks>
 internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 {
