@@ -146,7 +146,8 @@ internal sealed class XInputGamepadProvider : IPeripheralProvider
                 // gone, so a slot that answered at all answered about now. Said rather than
                 // left to the default, since freshness is a provider's claim to make. There
                 // is no BatteryUpdatedUtc for the same reason — the reading carries no
-                // timestamp, and inventing one would only make the menu's "last seen" lie.
+                // timestamp, and inventing one would put a fabricated figure in front of
+                // anything that reasons about age, the diagnostics dump included.
                 IsStale = false,
             });
         }

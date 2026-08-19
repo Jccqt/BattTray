@@ -6,7 +6,7 @@ using BattTray.Tray;
 namespace BattTray.Tests;
 
 /// <summary>
-/// The text of a menu row, and the reading age inside it.
+/// The text of a menu row: what it states about the reading, the link, and the build.
 /// </summary>
 /// <remarks>
 /// Static methods on the tray context, so nothing here constructs a window or a tray icon —
@@ -85,27 +85,57 @@ public class MenuRenderingTests
     }
 
     [Fact]
-    public void AStaleReadingCarriesItsAge()
+    public void AStaleReadingSaysThatAndNothingElseAboutItsAge()
     {
+        // "(stale)" is the whole of what a row says about how old a number is, and it sits
+        // with the number rather than with the link, because it is the number that is old: a
+        // present device carrying a leftover has nowhere else to put it. The row used to
+        // spell the age out beside it — "80% (stale, last seen 5h ago)" — which bought a
+        // qualification on a menu that is read at a glance.
         var device = Device.At(80, connected: false, stale: true)
             with { BatteryUpdatedUtc = DateTime.UtcNow.AddHours(-5) };
 
-        // The age sits with the number rather than with the link, because it is the number's
-        // age. The clause used to hang off "disconnected", which is why a present device with
-        // an old reading had nowhere to put it.
-        Assert.Equal(
-            "dev — 80% (stale, last seen 5h ago) · disconnected (Bluetooth)",
-            TrayApplicationContext.DescribeDevice(device));
+        string row = TrayApplicationContext.DescribeDevice(device);
+
+        Assert.Equal("dev — 80% (stale) · disconnected (Bluetooth)", row);
+        Assert.DoesNotContain("last seen", row);
     }
 
     [Fact]
-    public void AStaleReadingWithNoTimestampSaysOnlyThatItIsStale()
+    public void AReadingWindowsHasATimestampForIsStillQuotedPlainly()
     {
-        // Windows has no timestamp for some nodes. Better "(stale)" alone than an age the app
-        // does not have.
-        var device = Device.At(80, connected: false, stale: true);
+        // The device the age clause existed for: a connected headset whose level was written
+        // when HFP connected and not since. The timestamp is still read and still reaches
+        // BatteryUpdatedUtc for the diagnostics dump; the menu spends no words on it.
+        var device = Device.At(100) with { BatteryUpdatedUtc = DateTime.UtcNow.AddMinutes(-17) };
 
-        Assert.Equal("dev — 80% (stale) · disconnected (Bluetooth)", TrayApplicationContext.DescribeDevice(device));
+        Assert.Equal("dev — 100% · connected (Bluetooth)", TrayApplicationContext.DescribeDevice(device));
+    }
+
+    [Fact]
+    public void ALiveBandWithATimestampSurrendersNeitherNumber()
+    {
+        // Two numbers the row must not show: the stand-in percentage behind the band, and any
+        // rendering of the timestamp.
+        var device = Device.Band(percent: 60, name: "medium")
+            with { BatteryUpdatedUtc = DateTime.UtcNow.AddHours(-2) };
+
+        string row = TrayApplicationContext.DescribeDevice(device);
+
+        Assert.Equal("pad — medium · connected (Bluetooth)", row);
+        Assert.DoesNotContain("60", row);
+    }
+
+    [Fact]
+    public void ADeviceWithNoReadingIsUnmovedByATimestamp()
+    {
+        // A timestamp without a level is a node Windows once had a number for. Nothing was
+        // read, so the row says only that.
+        var device = Device.At(null) with { BatteryUpdatedUtc = DateTime.UtcNow.AddHours(-3) };
+
+        Assert.Equal(
+            "dev — no battery reported · connected (Bluetooth)",
+            TrayApplicationContext.DescribeDevice(device));
     }
 
     [Fact]
@@ -123,7 +153,7 @@ public class MenuRenderingTests
     public void AFreshReadingFromADisconnectedDeviceIsNotMarkedStale()
     {
         // Disconnection is not what makes a number old. A source that reports a level as the
-        // link drops is quoted plainly; only the age clause is missing, because there is none.
+        // link drops is quoted plainly, with no "(stale)" to cast doubt on it.
         var device = Device.At(80, connected: false);
 
         Assert.Equal("dev — 80% · disconnected (Bluetooth)", TrayApplicationContext.DescribeDevice(device));
@@ -175,42 +205,4 @@ public class MenuRenderingTests
         // wide as its widest row. The exact build is in the dump, which is where anyone who
         // needs the revision is already going.
         Assert.DoesNotContain('+', TrayApplicationContext.DescribeVersion());
-
-    [Theory]
-    [InlineData(0, ", last seen just now")]
-    [InlineData(30, ", last seen just now")]
-    [InlineData(55, ", last seen just now")]
-    [InlineData(60, ", last seen 1m ago")]
-    [InlineData(90, ", last seen 1m ago")]
-    [InlineData(3_570, ", last seen 59m ago")]
-    [InlineData(3_600, ", last seen 1h ago")]
-    [InlineData(86_340, ", last seen 23h ago")]
-    [InlineData(86_400, ", last seen 1d ago")]
-    [InlineData(4 * 86_400, ", last seen 4d ago")]
-    public void AgeIsRenderedInTheLargestUnitThatFits(int secondsAgo, string expected)
-    {
-        // Each boundary is here because the switch is a chain of exclusive upper bounds, and
-        // an off-by-one at any of them produces "60m ago" or "24h ago" — legible, but the
-        // kind of thing that makes a reader wonder whether the app can count.
-        //
-        // The ages are read against the wall clock, so every case is the stated age plus
-        // however long the test took to reach the assertion. That only ever rounds upward,
-        // which is why the boundaries themselves are safe and the cases just below one are
-        // held back by half a unit rather than by a second.
-        var updated = DateTime.UtcNow.AddSeconds(-secondsAgo);
-
-        Assert.Equal(expected, TrayApplicationContext.FormatAge(updated));
-    }
-
-    [Fact]
-    public void NoTimestampMeansNoAgeClause() =>
-        // A device Windows has no timestamp for. Better a row that says only "disconnected"
-        // than one claiming a reading age it does not have.
-        Assert.Equal(string.Empty, TrayApplicationContext.FormatAge(null));
-
-    [Fact]
-    public void AFutureTimestampIsNotRenderedAsANegativeAge() =>
-        // Clock changes and time-zone slips do produce these. "-3h ago" would look like a bug
-        // in the app rather than in the clock, so the clause is dropped instead.
-        Assert.Equal(string.Empty, TrayApplicationContext.FormatAge(DateTime.UtcNow.AddHours(1)));
 }

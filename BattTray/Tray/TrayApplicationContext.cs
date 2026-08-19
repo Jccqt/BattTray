@@ -329,9 +329,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// <remarks>
     /// Static, and handed both the list and the monitor's pick rather than reaching for a
     /// monitor itself, so the wording can be tested without a tray icon — the same reason
-    /// <see cref="DescribeDevice"/> and <see cref="FormatAge"/> are. It matters more here than
-    /// for a menu row: this string is the app's only keyboard-reachable content, so its
-    /// truncation rule is worth pinning rather than eyeballing. See
+    /// <see cref="DescribeDevice"/> is. It matters more here than for a menu row: this string
+    /// is the app's only keyboard-reachable content, so its truncation rule is worth pinning
+    /// rather than eyeballing. See
     /// <see cref="MaxTooltipLength"/>.
     /// </remarks>
     internal static string BuildTooltip(IReadOnlyList<Peripheral> devices, Peripheral? lowest)
@@ -539,19 +539,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// something the menu has shown.
     ///
     /// The row states three facts and states each once: what the reading is, what the device
-    /// is doing, and what it is doing it over. The age belongs to the first clause because it
-    /// is the reading's age and not the link's — a device can be present and carrying a number
-    /// from an earlier session, and that row has to read "87% (stale) · charging" rather than
-    /// picking one of the two halves to believe. Which is why nothing here asks about
+    /// is doing, and what it is doing it over. "(stale)" belongs to the first clause because
+    /// it is the reading that is old and not the link — a device can be present and carrying a
+    /// number from an earlier session, and that row has to read "87% (stale) · charging" rather
+    /// than picking one of the two halves to believe. Which is why nothing here asks about
     /// connectedness to find out whether a number is current: see
     /// <see cref="Peripheral.IsStale"/>.
+    ///
+    /// The row once carried the reading's age as well — ", last seen 17m ago" — since a
+    /// connected Bluetooth device is not a device that is reporting: Windows writes the battery
+    /// property when the headset volunteers a level, which for an HFP headset is when the
+    /// profile connects and rarely again. The age is no longer shown. It bought a caveat on
+    /// every row to describe a case the stale flag already names, and a menu that is read at a
+    /// glance is worth more than the qualification. <see cref="Peripheral.BatteryUpdatedUtc"/>
+    /// still carries the timestamp for anything that wants to reason about freshness — the
+    /// diagnostics dump prints it — it is simply not rendered here.
     /// </remarks>
     internal static string DescribeDevice(Peripheral device)
     {
         string battery = device.BatteryText switch
         {
             null => "no battery reported",
-            { } text when device.IsStale => $"{text} (stale{FormatAge(device.BatteryUpdatedUtc)})",
+            { } text when device.IsStale => $"{text} (stale)",
             { } text => text,
         };
 
@@ -598,27 +607,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         Transport.Wireless => " (wireless)",
         _ => string.Empty,
     };
-
-    /// <summary>Renders how long ago a reading was taken, e.g. ", last seen 4d ago".</summary>
-    internal static string FormatAge(DateTime? updatedUtc)
-    {
-        if (updatedUtc is not { } timestamp)
-            return string.Empty;
-
-        var age = DateTime.UtcNow - timestamp;
-        if (age < TimeSpan.Zero)
-            return string.Empty;
-
-        string rendered = age switch
-        {
-            { TotalMinutes: < 1 } => "just now",
-            { TotalHours: < 1 } => $"{(int)age.TotalMinutes}m ago",
-            { TotalDays: < 1 } => $"{(int)age.TotalHours}h ago",
-            _ => $"{(int)age.TotalDays}d ago",
-        };
-
-        return $", last seen {rendered}";
-    }
 
     void ExitApplication()
     {
