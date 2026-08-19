@@ -133,9 +133,19 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
 
                 // Windows keeps the last percentage it saw after a device goes away and says
                 // nothing about when the link dropped, so on this transport a reading from a
-                // disconnected device is the leftover and a reading from a connected one is
-                // about now. That is this source's behaviour and not a rule of the model,
-                // which is why it is claimed here rather than derived in Peripheral.IsStale.
+                // disconnected device is the leftover. That is this source's behaviour and not
+                // a rule of the model, which is why it is claimed here rather than derived in
+                // Peripheral.IsStale.
+                //
+                // The converse does not hold and is deliberately not claimed: a connected
+                // device is not a device that is reporting. Windows writes the battery property
+                // when the device volunteers a level, which for an HFP headset is when the
+                // profile connects and rarely again — a headset here sat connected for
+                // seventeen minutes without the property being touched, then had it rewritten
+                // the instant the link came back. Marking those readings stale would be the
+                // wrong repair, since the connect-time figure is the newest that exists and
+                // LowBatteryNotifier ignores anything stale. How old that figure is, is what
+                // BluetoothBatteryLastUpdated records.
                 IsStale = !device.IsConnected,
             });
         }
@@ -163,8 +173,10 @@ internal sealed partial class BluetoothPeripheralProvider : IPeripheralProvider
                 BatteryUpdatedUtc = reading.UpdatedUtc,
                 IsConnected = reading.IsConnected,
 
-                // Same claim as above, from the same source: the node kept the number, the
-                // link flag says whether it is about now.
+                // Same claim as above, and no more of one: the node kept the number, and the
+                // link flag settles only whether the device is gone and the number therefore a
+                // leftover. How old a live device's number is stays a question for its
+                // timestamp.
                 IsStale = !reading.IsConnected,
             });
         }
